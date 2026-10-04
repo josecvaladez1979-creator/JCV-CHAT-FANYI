@@ -1,0 +1,6 @@
+{
+  "name": "JCV CHAT FĀNYÌ",
+  "description": "Chat multilingüe en tiempo real con traducción IA 99% mediante Qwen en SiliconFlow, audio voz a texto, cifrado E2EE y suscripciones.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

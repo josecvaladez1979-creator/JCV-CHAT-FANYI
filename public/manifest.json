@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "JCV CHAT FĀNYÌ",
+  "short_name": "JCV Fānyì",
+  "description": "Chat multilingüe en tiempo real con IA Qwen3-32B, llamadas de voz y video E2EE.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "auto",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="#020617"/>
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bg)"/>
+  <g transform="translate(100, 110)">
+    <!-- Chat Speech Bubble -->
+    <path d="M 40,30 C 18,30 0,48 0,70 L 0,170 C 0,192 18,210 40,210 L 60,210 L 60,250 L 100,210 L 220,210 C 242,210 260,192 260,170 L 260,70 C 260,48 242,30 220,30 Z" fill="#ffffff" fill-opacity="0.95"/>
+    <!-- Lock & Translation Symbol inside bubble -->
+    <text x="130" y="145" font-family="-apple-system, system-ui, sans-serif" font-size="78" font-weight="900" fill="#4f46e5" text-anchor="middle">JCV</text>
+    <text x="130" y="190" font-family="-apple-system, system-ui, sans-serif" font-size="28" font-weight="bold" fill="#7c3aed" text-anchor="middle">翻译 FĀNYÌ</text>
+  </g>
+  <!-- E2EE Shield badge on bottom-right -->
+  <circle cx="390" cy="380" r="56" fill="#020617"/>
+  <circle cx="390" cy="380" r="48" fill="url(#accent)"/>
+  <path d="M 390,355 L 412,365 L 412,385 C 412,398 402,408 390,412 C 378,408 368,398 368,385 L 368,365 Z" fill="#ffffff"/>
+  <!-- Lock keyhole -->
+  <circle cx="390" cy="382" r="4" fill="#020617"/>
+  <rect x="388" y="382" width="4" height="8" rx="1" fill="#020617"/>
+</svg>
