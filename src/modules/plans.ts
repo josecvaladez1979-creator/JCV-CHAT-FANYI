@@ -131,11 +131,11 @@ export const B2B_PLANS: Record<B2BPlanId, B2BPlan> = {
 // FREEMIUM — Usuario gratuito
 // ═══════════════════════════════════════════════
 export const FREEMIUM_CONFIG = {
-  messagesPerDay: 20,
+  messagesPerDay: 10,
   maxCharsPerMessage: 500,
   features: [
     'Chat en el mismo idioma',
-    '20 traducciones/día (máx 500 caracteres)',
+    '10 traducciones/día (máx 500 caracteres)',
     'Sin herramientas premium',
     'Sin llamadas de voz traducidas',
   ],
