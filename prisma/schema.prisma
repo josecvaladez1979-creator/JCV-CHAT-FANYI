@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════
+enum Role {
+  USER
+  ADMIN
+  ORG_OWNER
+  ORG_MEMBER
+}
+
+enum B2CPlanId {
+  B2C_15D
+  B2C_1M
+  B2C_1Y
+}
+
+enum B2BPlanId {
+  B2B_15D
+  B2B_1M
+  B2B_1Y
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+  TRIAL
+}
+
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+  MERCADOPAGO
+}
+
+enum InvoiceStatus {
+  PAID
+  PENDING
+  REFUNDED
+  FAILED
+}
+
+enum MessageModule {
+  FREEMIUM
+  B2C
+  B2B
+  VAULT
+}
+
+// ═══════════════════════════════════════════════
+// MODELOS PRINCIPALES
+// ═══════════════════════════════════════════════
+
+model User {
+  id                String           @id @default(cuid())
+  email             String           @unique
+  passwordHash      String
+  name              String
+  avatar            String?
+  preferredLanguage String           @default("es")
+  role              Role             @default(USER)
+  orgId             String?
+  org               Organization?    @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  // Autenticación
+  refreshTokens     RefreshToken[]
+
+  // Suscripciones (mutuamente excluyentes)
+  subscriptionB2C   SubscriptionB2C?
+  // Usuarios pueden tener B2B vía su org
+
+  // Freemium tracking
+  freemiumUsage     FreemiumUsage[]
+
+  // Mensajes
+  messages          Message[]
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([orgId])
+  @@index([email])
+}
+
+model Organization {
+  id              String             @id @default(cuid())
+  companyName     String
+  rfc             String?
+  members         User[]
+  subscriptionB2B SubscriptionB2B?
+  messages        Message[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ═══════════════════════════════════════════════
+// FREEMIUM — Tracking diario por usuario
+// ═══════════════════════════════════════════════
+model FreemiumUsage {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day            String   // formato "2026-10-05"
+  messagesUsed   Int      @default(0)
+  translationsUsed Int    @default(0)
+
+  @@unique([userId, day])
+  @@index([userId, day])
+}
+
+// ═══════════════════════════════════════════════
+// B2C — Suscripciones individuales
+// ═══════════════════════════════════════════════
+model SubscriptionB2C {
+  id          String              @id @default(cuid())
+  userId      String              @unique
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan        B2CPlanId
+  provider    PaymentProvider
+  externalId  String?             @unique
+  status      SubscriptionStatus  @default(TRIAL)
+  autoRenew   Boolean             @default(true)
+  startsAt    DateTime            @default(now())
+  expiresAt   DateTime
+  invoices    Invoice[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([userId])
+  @@index([externalId])
+}
+
+// ═══════════════════════════════════════════════
+// B2B — Suscripciones empresariales (por org)
+// ═══════════════════════════════════════════════
+model SubscriptionB2B {
+  id          String              @id @default(cuid())
+  orgId       String              @unique
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  plan        B2BPlanId
+  provider    PaymentProvider
+  externalId  String?             @unique
+  status      SubscriptionStatus  @default(TRIAL)
+  seats       Int                 @default(5)
+  autoRenew   Boolean             @default(true)
+  startsAt    DateTime            @default(now())
+  expiresAt   DateTime
+  invoices    Invoice[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([orgId])
+  @@index([externalId])
+}
+
+// ═══════════════════════════════════════════════
+// INVOICES — Facturación
+// ═══════════════════════════════════════════════
+model Invoice {
+  id          String             @id @default(cuid())
+  amount      Int                // céntimos
+  currency    String             @default("usd")
+  provider    PaymentProvider
+  providerRef String?
+  status      InvoiceStatus      @default(PAID)
+  b2cId       String?
+  b2c         SubscriptionB2C?   @relation(fields: [b2cId], references: [id], onDelete: SetNull)
+  b2bId       String?
+  b2b         SubscriptionB2B?   @relation(fields: [b2bId], references: [id], onDelete: SetNull)
+  createdAt   DateTime           @default(now())
+
+  @@index([b2cId])
+  @@index([b2bId])
+}
+
+// ═══════════════════════════════════════════════
+// MESSAGES — Persistencia real
+// ═══════════════════════════════════════════════
+model Message {
+  id                  String         @id @default(cuid())
+  channelId           String
+  senderId            String
+  sender              User           @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  orgId               String?
+  org                 Organization?  @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  module              MessageModule  @default(FREEMIUM)
+  text                String
+  originalText        String?
+  translations        Json?          // { "es": "...", "en": "..." }
+  sourceLanguage      String         @default("es")
+  isE2EE              Boolean        @default(false)
+  encryptedPayload    Json?
+  isAudio             Boolean        @default(false)
+  audioDuration       Float?
+  audioBase64         String?        @db.Text
+  aiModel             String?
+  translationAccuracy String?
+  reactions           Json?          // { "👍": ["user1", "user2"] }
+  createdAt           DateTime       @default(now())
+
+  @@index([channelId, createdAt])
+  @@index([senderId])
+  @@index([orgId])
+}
+
+// ═══════════════════════════════════════════════
+// CHANNELS — Salas de chat
+// ═══════════════════════════════════════════════
+model Channel {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  description     String?
+  isPrivate       Boolean  @default(false)
+  isE2EE          Boolean  @default(false)
+  e2eePassphrase  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════
+// WEBHOOK EVENTS — Idempotencia
+// ═══════════════════════════════════════════════
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  provider    String
+  eventId     String
+  type        String
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([provider, eventId])
+  @@index([provider, eventId])
+}
+
+// ═══════════════════════════════════════════════
+// VAULT CERTIFICATES — Contratos B2B destruidos
+// ═══════════════════════════════════════════════
+model VaultCertificate {
+  id            String   @id @default(cuid())
+  documentName  String
+  destroyedAt   String
+  hash          String
+  shortHash     String
+  pages         Int
+  timerSelected String
+  packRemaining String
+  cfdiFolio     String
+  status        String   @default("PURGADO PERMANENTEMENTE")
+  createdAt     DateTime @default(now())
+}
+
+// ═══════════════════════════════════════════════
+// PLAN CONFIG — Activar/desactivar planes desde admin
+// ═══════════════════════════════════════════════
+model PlanConfig {
+  id        String    @id @default(cuid())
+  planId    String    @unique // "B2C_15D", "B2B_1M", etc.
+  active    Boolean   @default(true)
+  updatedAt DateTime  @updatedAt
+}
