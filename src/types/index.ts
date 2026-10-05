@@ -1,16 +1,6 @@
 export type LanguageCode =
-  | 'es'
-  | 'en'
-  | 'zh'
-  | 'ja'
-  | 'fr'
-  | 'de'
-  | 'pt'
-  | 'it'
-  | 'ru'
-  | 'ko'
-  | 'ar'
-  | 'hi';
+  | 'es' | 'en' | 'zh' | 'ja' | 'fr' | 'de'
+  | 'pt' | 'it' | 'ru' | 'ko' | 'ar' | 'hi';
 
 export interface Language {
   code: LanguageCode;
@@ -34,7 +24,59 @@ export const SUPPORTED_LANGUAGES: Language[] = [
   { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', flag: '🇮🇳' },
 ];
 
-export type B2CPlanType = 'freemium' | 'free' | 'express' | 'semanal' | 'mensual' | 'anual';
+// ═══════════════════════════════════════════════
+// FREEMIUM — Usuario gratuito
+// ═══════════════════════════════════════════════
+export interface FreemiumLimits {
+  messagesPerDay: number;
+  maxCharsPerMessage: number;
+}
+
+// ═══════════════════════════════════════════════
+// B2C — Planes individuales (15d, 1m, 1y)
+// ═══════════════════════════════════════════════
+export type B2CPlanId = 'B2C_15D' | 'B2C_1M' | 'B2C_1Y';
+
+export interface B2CPlan {
+  id: B2CPlanId;
+  name: string;
+  durationDays: number;
+  priceCents: number;
+  currency: 'MXN' | 'USD';
+  features: string[];
+  limits: {
+    messagesPerDay: number;
+    voiceMinutes: number;
+    videoMinutes: number;
+    translations: number; // -1 = unlimited
+  };
+  active: boolean;
+  startsAt?: string;
+  expiresAt?: string;
+  autoRenew?: boolean;
+}
+
+// ═══════════════════════════════════════════════
+// B2B — Planes empresariales (15d, 1m, 1y)
+// ═══════════════════════════════════════════════
+export type B2BPlanId = 'B2B_15D' | 'B2B_1M' | 'B2B_1Y';
+
+export interface B2BPlan {
+  id: B2BPlanId;
+  companyName?: string;
+  users?: number;
+  durationDays: number;
+  priceCents: number;
+  currency: 'MXN' | 'USD';
+  features: string[];
+  seats: number;
+  adminPanel: boolean;
+  statsEnabled: boolean;
+  active: boolean;
+  startsAt?: string;
+  expiresAt?: string;
+  autoRenew?: boolean;
+}
 
 export interface User {
   id: string;
@@ -42,12 +84,14 @@ export interface User {
   email: string;
   avatar: string;
   preferredLanguage: LanguageCode;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'b2b_owner' | 'b2b_member';
   isOnline?: boolean;
-  subscriptionPlan?: 'freemium' | 'free' | 'express' | 'semanal' | 'mensual' | 'anual' | 'pro_15d' | 'pro_1m' | 'pro_1y';
-  subscriptionStatus?: 'active' | 'trial' | 'expired';
-  subscriptionExpiresAt?: string;
-  subscriptionGateway?: 'mercadopago' | 'stripe' | 'paypal';
+  orgId?: string;
+  companyName?: string;
+  // Suscripciones (solo una activa a la vez)
+  freemium?: FreemiumLimits;
+  subscriptionB2C?: B2CPlan | null;
+  subscriptionB2B?: B2BPlan | null;
   bonusVoiceMinutes?: number;
 }
 
@@ -66,24 +110,19 @@ export interface Message {
   senderAvatar: string;
   senderLanguage: LanguageCode;
   timestamp: number;
-  // Raw or decrypted message
   text: string;
-  // Original text before translation
   originalText?: string;
-  // Target translation cache map: [languageCode]: translatedText
   translations?: Record<string, string>;
   skipTranslation?: boolean;
-  // E2EE data
   isE2EE: boolean;
   encryptedPayload?: E2EEMessagePayload;
-  // Audio voice note
   isAudio?: boolean;
-  audioDuration?: number; // seconds
+  audioDuration?: number;
   audioBase64?: string;
-  // Model used for translation
   aiModel?: string;
   translationAccuracy?: string;
-  reactions?: Record<string, string[]>; // emoji: userIds[]
+  reactions?: Record<string, string[]>;
+  module?: 'freemium' | 'b2c' | 'b2b'; // Trazabilidad
 }
 
 export interface Channel {
@@ -100,34 +139,15 @@ export interface Channel {
   lastMessageTime?: number;
 }
 
-export type BillingCycle = 'express' | 'mensual' | 'anual' | 'semanal' | '15d' | '1m' | '1y';
 export type PaymentGateway = 'mercadopago' | 'stripe' | 'paypal';
 
-export type TopUpPackageId = 'topup_mini' | 'topup_pro';
-
 export interface TopUpPackage {
-  id: TopUpPackageId;
+  id: string;
   name: string;
   minutes: number;
   priceMxn: number;
   priceUsd: number;
   description: string;
-  badge?: string;
-}
-
-export interface PlanPricing {
-  cycle: BillingCycle;
-  cycleLabel: string;
-  days: number;
-  priceUsd: number;
-  priceMxn: number;
-  savingsLabel?: string;
-  description: string;
-  features: string[];
-  translationsLimit: number;
-  callMinutesLimit: number;
-  videoMinutesLimit: number;
-  pdfDocumentsLimit?: number;
   badge?: string;
 }
 
@@ -140,6 +160,7 @@ export interface QuotaStatus {
   isExhausted: boolean;
 }
 
+// Legacy - mantener compatibilidad con Vault
 export type VaultPlanId = 'individual_20p' | 'individual_100p' | 'pack_10';
 export type VaultTimerOption = '30m' | '1h' | '1h 30m' | '2h' | '2h 30m' | '3h';
 
@@ -175,10 +196,5 @@ export interface VaultCertificate {
 }
 
 export type VaultStep =
-  | 'overview'
-  | 'step1_plan'
-  | 'step2_upload'
-  | 'step3_translating'
-  | 'step4_download'
-  | 'step5_destroyed';
-
+  | 'overview' | 'step1_plan' | 'step2_upload'
+  | 'step3_translating' | 'step4_download' | 'step5_destroyed';
