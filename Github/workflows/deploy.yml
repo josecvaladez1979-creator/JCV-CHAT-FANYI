@@ -11,24 +11,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '20'
-
 jobs:
-  # ═══════════════════════════════════════════════
-  # JOB 1: Calidad (corre en PRs y pushes)
-  # ═══════════════════════════════════════════════
+  # ═══════════════════════════════════════
+  # JOB 1: Calidad (typecheck + build)
+  # ═══════════════════════════════════════
   quality:
     name: 🔍 Typecheck + Build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
@@ -42,84 +37,35 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
-      - name: Build (Vite)
+      - name: Build
         run: npm run build
         env:
           NODE_ENV: production
 
-  # ═══════════════════════════════════════════════
-  # JOB 2: Deploy a producción (solo push a main)
-  # ═══════════════════════════════════════════════
+  # ═══════════════════════════════════════
+  # JOB 2: Deploy a Render (solo push a main)
+  # ═══════════════════════════════════════
   deploy:
-    name: 🚀 Deploy a Producción
+    name: 🚀 Deploy a Render
     needs: quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ vars.PRODUCTION_URL }}
+    environment: production
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Deploy vía SSH + PM2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          script_stop: true
-          script: |
-            set -euo pipefail
-            echo "🚀 Iniciando despliegue..."
-
-            APP_DIR="${DEPLOY_DIR:-/var/www/jcv-chat-fānyì}"
-            cd "$APP_DIR"
-
-            echo "📥 Descargando últimos cambios..."
-            git fetch origin main
-            git reset --hard origin/main
-
-            echo "📦 Instalando dependencias de producción..."
-            npm ci --omit=dev --no-audit --no-fund
-
-            echo "🗄️  Generando cliente Prisma..."
-            npx prisma generate
-
-            echo "⚙️  Aplicando migraciones..."
-            npx prisma migrate deploy
-
-            echo "🔨 Construyendo frontend (Vite)..."
-            npx vite build
-
-            echo "♻️  Reiniciando aplicación con PM2..."
-            if pm2 describe jcv-api > /dev/null 2>&1; then
-              pm2 reload jcv-api --update-env
-            else
-              pm2 start server.ts \
-                --name jcv-api \
-                --interpreter tsx \
-                --env production \
-                --max-memory-restart 512M \
-                --time
-            fi
-
-            pm2 save
-
-            echo "✅ Deploy completado: $(date)"
-            pm2 list
-
-      - name: Verificar salud
+      - name: Trigger Render Deploy Hook
         run: |
-          sleep 5
-          curl -fsS "${{ vars.PRODUCTION_URL }}/api/auth/users" > /dev/null \
-            && echo "✅ API respondiendo" \
-            || echo "⚠️  API no responde aún (puede tardar unos segundos)"
+          echo "🚀 Disparando deploy en Render..."
+          RESPONSE=$(curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          echo "✅ Render respondió: $RESPONSE"
 
-      - name: Notificar éxito
-        if: success()
-        run: echo "✅ Deploy exitoso del commit ${{ github.sha }}"
+      - name: Esperar y verificar
+        run: |
+          sleep 60
+          echo "⏳ Esperando 60s a que Render termine el build..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ vars.PRODUCTION_URL }}/api/siliconflow/status" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ API respondiendo correctamente"
+          else
+            echo "⚠️  API aún no responde (status: $STATUS). Render puede tardar 2-3 min."
+          fi
