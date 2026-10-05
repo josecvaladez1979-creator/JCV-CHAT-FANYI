@@ -1,268 +1,202 @@
-import { User, Message, Channel, BillingCycle, PaymentGateway, LanguageCode } from '../types';
+import { User, Message, Channel, PaymentGateway, LanguageCode, B2CPlanId, B2BPlanId } from '../types';
 
-export const api = {
-  // SiliconFlow Status
-  async getSiliconFlowStatus(): Promise<{
-    hasApiKey: boolean;
-    defaultModel: string;
-    audioModel: string;
-    provider: string;
-    accuracy: string;
-  }> {
-    const res = await fetch('/api/siliconflow/status');
-    return res.json();
-  },
+class ApiClient {
+  private baseUrl = '';
+  private accessToken: string | null = null;
 
-  // Translate text
-  async translate(text: string, targetLang: LanguageCode, sourceLang?: LanguageCode, model?: string): Promise<{
-    translatedText: string;
-    modelUsed: string;
-    accuracy: string;
-  }> {
-    const res = await fetch('/api/siliconflow/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, targetLang, sourceLang, model }),
+  setAccessToken(token: string | null) {
+    this.accessToken = token;
+  }
+
+  private async request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(opts.headers as Record<string, string>),
+    };
+    if (this.accessToken) {
+      headers['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+
+    const res = await fetch(`${this.baseUrl}${path}`, { ...opts, headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || 'Request failed');
+    }
+    return res.status === 204 ? (undefined as T) : res.json();
+  }
+
+  // ─── SiliconFlow ───────────────────────────────────────
+  getSiliconFlowStatus() {
+    return this.request<{ hasApiKey: boolean; defaultModel: string; audioModel: string; provider: string; accuracy: string }>('/api/siliconflow/status');
+  }
+
+  translate(text: string, targetLang: LanguageCode, sourceLang?: LanguageCode, model?: string) {
+    return this.request<{ translatedText: string; modelUsed: string; accuracy: string }>('/api/siliconflow/translate', {
+      method: 'POST', body: JSON.stringify({ text, targetLang, sourceLang, model }),
     });
-    if (!res.ok) throw new Error('Translation failed');
-    return res.json();
-  },
+  }
 
-  // Transcribe and translate audio
-  async processAudio(audioBase64: string, targetLang: LanguageCode): Promise<{
-    transcription: string;
-    translatedText: string;
-    modelUsed: string;
-  }> {
-    const res = await fetch('/api/siliconflow/audio', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audioBase64, targetLang }),
+  processAudio(audioBase64: string, targetLang: LanguageCode) {
+    return this.request<{ transcription: string; translatedText: string; modelUsed: string }>('/api/siliconflow/audio', {
+      method: 'POST', body: JSON.stringify({ audioBase64, targetLang }),
     });
-    if (!res.ok) throw new Error('Audio processing failed');
-    return res.json();
-  },
+  }
 
-  // Channels
-  async getChannels(): Promise<Channel[]> {
-    const res = await fetch('/api/chat/channels');
-    const data = await res.json();
+  // ─── Channels ──────────────────────────────────────────
+  async getChannels() {
+    const data = await this.request<{ channels: Channel[] }>('/api/chat/channels');
     return data.channels;
-  },
+  }
 
-  async createChannel(name: string, description: string, isE2EE = false): Promise<Channel> {
-    const res = await fetch('/api/chat/channels', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description, isE2EE }),
+  async createChannel(name: string, description: string, isE2EE = false) {
+    const data = await this.request<{ channel: Channel }>('/api/chat/channels', {
+      method: 'POST', body: JSON.stringify({ name, description, isE2EE }),
     });
-    const data = await res.json();
     return data.channel;
-  },
+  }
 
-  // Messages
-  async getMessages(channelId: string): Promise<Message[]> {
-    const res = await fetch(`/api/chat/messages?channelId=${encodeURIComponent(channelId)}`);
-    const data = await res.json();
+  // ─── Messages ──────────────────────────────────────────
+  async getMessages(channelId: string) {
+    const data = await this.request<{ messages: Message[] }>(`/api/chat/messages?channelId=${encodeURIComponent(channelId)}`);
     return data.messages;
-  },
+  }
 
-  async sendMessage(messageData: Partial<Message>): Promise<Message> {
-    const res = await fetch('/api/chat/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(messageData),
+  sendMessage(messageData: Partial<Message>) {
+    return this.request<{ message: Message }>('/api/chat/messages', {
+      method: 'POST', body: JSON.stringify(messageData),
     });
-    if (!res.ok) throw new Error('Failed to send message');
-    const data = await res.json();
-    return data.message;
-  },
+  }
 
-  async sendTyping(channelId: string, userId: string, userName: string, isTyping: boolean): Promise<void> {
-    await fetch('/api/chat/typing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channelId, userId, userName, isTyping }),
-    });
-  },
-
-  async toggleReaction(messageId: string, emoji: string, userId: string): Promise<Record<string, string[]>> {
-    const res = await fetch(`/api/chat/messages/${messageId}/reaction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emoji, userId }),
-    });
-    const data = await res.json();
-    return data.reactions;
-  },
-
-  // Auth
-  async getUsers(): Promise<User[]> {
-    const res = await fetch('/api/auth/users');
-    const data = await res.json();
+  // ─── Auth ──────────────────────────────────────────────
+  async getUsers() {
+    const data = await this.request<{ users: User[] }>('/api/auth/users');
     return data.users;
-  },
+  }
 
-  async login(params: { email?: string; userId?: string }): Promise<{ user: User; token: string }> {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+  async login(params: { email?: string; password?: string; userId?: string }) {
+    const res = await this.request<{ user: User; token: string }>('/api/auth/login', {
+      method: 'POST', body: JSON.stringify(params),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Login failed');
-    }
-    return res.json();
-  },
+    this.setAccessToken(res.token);
+    return res;
+  }
 
-  async register(data: { name: string; email: string; preferredLanguage: LanguageCode; avatar?: string }): Promise<{ user: User; token: string }> {
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+  async register(data: { name: string; email: string; password: string; preferredLanguage: LanguageCode; avatar?: string }) {
+    const res = await this.request<{ user: User; token: string }>('/api/auth/register', {
+      method: 'POST', body: JSON.stringify(data),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Registration failed');
-    }
-    return res.json();
-  },
+    this.setAccessToken(res.token);
+    return res;
+  }
 
-  // Subscriptions & Checkout
-  async createCheckout(cycle: BillingCycle, gateway: PaymentGateway, userId: string) {
-    const res = await fetch('/api/subscriptions/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cycle, gateway, userId }),
+  // ─── FREEMIUM ──────────────────────────────────────────
+  getFreemiumQuota() {
+    return this.request<{ used: number; limit: number; remaining: number }>('/api/freemium/quota');
+  }
+
+  // ─── B2C ───────────────────────────────────────────────
+  getB2CPlans() {
+    return this.request<{ plans: import('../types').B2CPlan[] }>('/api/b2c/plans');
+  }
+
+  getB2CSubscription() {
+    return this.request<{ subscription: import('../types').B2CPlan | null }>('/api/b2c/subscription');
+  }
+
+  createB2CCheckout(planId: B2CPlanId, gateway: PaymentGateway) {
+    return this.request<{ url: string; orderId: string }>('/api/b2c/checkout', {
+      method: 'POST', body: JSON.stringify({ planId, gateway }),
     });
-    if (!res.ok) throw new Error('Checkout creation failed');
-    return res.json();
-  },
+  }
 
-  async confirmSubscription(userId: string, cycle: BillingCycle, gateway: PaymentGateway, orderId: string): Promise<{
-    success: boolean;
-    user: User;
-    message: string;
-    expiresAt: string;
-  }> {
-    const res = await fetch('/api/subscriptions/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, cycle, gateway, orderId }),
+  confirmB2CSubscription(orderId: string) {
+    return this.request<{ user: User }>('/api/b2c/confirm', {
+      method: 'POST', body: JSON.stringify({ orderId }),
     });
-    if (!res.ok) throw new Error('Subscription confirmation failed');
-    return res.json();
-  },
+  }
 
-  // Top-Up Microtransactions
-  async createTopUpCheckout(topupId: string, gateway: PaymentGateway, userId: string) {
-    const res = await fetch('/api/subscriptions/topup/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topupId, gateway, userId }),
+  cancelB2C() {
+    return this.request<{ success: boolean }>('/api/b2c/cancel', { method: 'POST' });
+  }
+
+  // ─── B2B ───────────────────────────────────────────────
+  getB2BPlans() {
+    return this.request<{ plans: import('../types').B2BPlan[] }>('/api/b2b/plans');
+  }
+
+  getB2BDashboard() {
+    return this.request<{ companyName: string; employees: User[]; subscription: import('../types').B2BPlan | null }>('/api/b2b/dashboard');
+  }
+
+  createB2BCheckout(companyName: string, planId: B2BPlanId, gateway: PaymentGateway) {
+    return this.request<{ url: string; orderId: string }>('/api/b2b/checkout', {
+      method: 'POST', body: JSON.stringify({ companyName, planId, gateway }),
     });
-    if (!res.ok) throw new Error('Top-up checkout creation failed');
-    return res.json();
-  },
+  }
 
-  async confirmTopUp(userId: string, topupId: string, orderId: string): Promise<{
-    success: boolean;
-    user: User;
-    addedMinutes: number;
-    totalBonusMinutes: number;
-    message: string;
-    orderId: string;
-  }> {
-    const res = await fetch('/api/subscriptions/topup/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, topupId, orderId }),
+  confirmB2BSubscription(orderId: string) {
+    return this.request<{ user: User }>('/api/b2b/confirm', {
+      method: 'POST', body: JSON.stringify({ orderId }),
     });
-    if (!res.ok) throw new Error('Top-up confirmation failed');
-    return res.json();
-  },
+  }
 
-  // WebRTC E2EE Signaling
-  async sendWebRTCSignal(signalData: {
-    channelId: string;
-    senderId: string;
-    senderName: string;
-    senderAvatar: string;
-    targetUserId?: string;
-    signalType: 'call_request' | 'call_accepted' | 'call_declined' | 'call_ended' | 'offer' | 'answer' | 'ice_candidate';
-    callType: 'voice' | 'video';
-    sdp?: any;
-    candidate?: any;
-    e2ee?: boolean;
-    timestamp?: number;
-  }) {
-    const res = await fetch('/api/webrtc/signal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...signalData, timestamp: Date.now() }),
+  addB2BEmployee(data: { name: string; email: string; password: string }) {
+    return this.request<{ employee: User }>('/api/b2b/employees', {
+      method: 'POST', body: JSON.stringify(data),
     });
-    return res.json();
-  },
+  }
 
-  // ==========================================
-  // JCV FĀNYÌ VAULT - Enterprise B2B API
-  // ==========================================
-  async getVaultPlans() {
-    const res = await fetch('/api/vault/plans');
-    return res.json();
-  },
+  removeB2BEmployee(employeeId: string) {
+    return this.request<void>(`/api/b2b/employees/${employeeId}`, { method: 'DELETE' });
+  }
 
-  async createVaultCheckout(planId: string, gateway = 'mercadopago', clientEmail?: string, rfc?: string) {
-    const res = await fetch('/api/vault/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId, gateway, clientEmail, rfc }),
+  getB2BStats() {
+    return this.request<{ messages: number; users: number; translations: number }>('/api/b2b/stats');
+  }
+
+  // ─── Vault (legacy) ────────────────────────────────────
+  getVaultPlans() { return this.request('/api/vault/plans'); }
+  createVaultCheckout(planId: string, gateway = 'mercadopago', clientEmail?: string, rfc?: string) {
+    return this.request('/api/vault/checkout', {
+      method: 'POST', body: JSON.stringify({ planId, gateway, clientEmail, rfc }),
     });
-    if (!res.ok) throw new Error('Error al procesar orden de bóveda');
-    return res.json();
-  },
-
-  async translateVaultContract(params: {
-    documentName: string;
-    content: string;
-    sourceLang?: string;
-    targetLang?: string;
-    timerDuration?: string;
-    planId?: string;
-    pages?: number;
-  }) {
-    const res = await fetch('/api/vault/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Error en traducción jurídica del contrato');
-    }
-    return res.json();
-  },
-
+  }
+  translateVaultContract(params: { documentName: string; content: string; sourceLang?: string; targetLang?: string; timerDuration?: string; planId?: string; pages?: number }) {
+    return this.request('/api/vault/translate', { method: 'POST', body: JSON.stringify(params) });
+  }
   async getVaultCertificates() {
-    const res = await fetch('/api/vault/certificates');
-    const data = await res.json();
+    const data = await this.request<{ certificates: import('../types').VaultCertificate[] }>('/api/vault/certificates');
     return data.certificates;
-  },
+  }
 
-  async recordDestructionCertificate(params: {
-    documentName: string;
-    hash?: string;
-    pages?: number;
-    packRemaining?: string;
-    timerSelected?: string;
-  }) {
-    const res = await fetch('/api/vault/certificates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+  // ─── WebRTC ────────────────────────────────────────────
+  sendWebRTCSignal(signalData: any) {
+    return this.request('/api/webrtc/signal', {
+      method: 'POST', body: JSON.stringify({ ...signalData, timestamp: Date.now() }),
     });
-    const data = await res.json();
-    return data.certificate;
-  },
-};
+  }
+
+  // ─── Legacy (compatibilidad) ──────────────────────────
+  async createCheckout(cycle: string, gateway: PaymentGateway, userId: string) {
+    // Mapeo legacy: 'mensual' -> B2C_1M, 'anual' -> B2B_1Y
+    if (cycle === 'mensual' || cycle === '1m') {
+      return this.createB2CCheckout('B2C_1M', gateway);
+    }
+    if (cycle === 'anual' || cycle === '1y') {
+      return this.createB2BCheckout('', 'B2B_1Y', gateway);
+    }
+    return this.createB2CCheckout('B2C_15D', gateway);
+  }
+
+  async confirmSubscription(userId: string, cycle: string, gateway: PaymentGateway, orderId: string) {
+    if (cycle === 'mensual' || cycle === '1m') {
+      return this.confirmB2CSubscription(orderId);
+    }
+    if (cycle === 'anual' || cycle === '1y') {
+      return this.confirmB2BSubscription(orderId);
+    }
+    return this.confirmB2CSubscription(orderId);
+  }
+}
+
+export const api = new ApiClient();
