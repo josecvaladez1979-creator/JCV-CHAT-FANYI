@@ -231,3 +231,43 @@ export function incrementTranslationQuota(planInput?: string): QuotaStatus {
 
   return { used, limit, remaining, percent, is80Percent, isExhausted };
       }
+/**
+ * Incrementa el contador de minutos de llamadas (voz o video)
+ * Usado por CallModal.tsx cuando el usuario cuelga una llamada
+ */
+export function incrementCallQuota(
+  planInput: string | undefined,
+  durationSeconds: number,
+  callType: 'voice' | 'video'
+): void {
+  const plan = normalizePlan(planInput);
+
+  // Convertir segundos a minutos (redondeando hacia arriba)
+  const minutes = Math.ceil(durationSeconds / 60);
+  if (minutes <= 0) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const storedDay = localStorage.getItem('jcv_quota_day');
+
+  let callMinutesUsed = 0;
+  let videoMinutesUsed = 0;
+
+  if (storedDay === today) {
+    callMinutesUsed = parseInt(localStorage.getItem('jcv_quota_call_minutes') || '0', 10);
+    videoMinutesUsed = parseInt(localStorage.getItem('jcv_quota_video_minutes') || '0', 10);
+  } else {
+    // Nuevo día, inicializar contadores
+    localStorage.setItem('jcv_quota_day', today);
+  }
+
+  // Incrementar según el tipo de llamada
+  if (callType === 'video') {
+    videoMinutesUsed += minutes;
+    localStorage.setItem('jcv_quota_video_minutes', String(videoMinutesUsed));
+  } else {
+    callMinutesUsed += minutes;
+    localStorage.setItem('jcv_quota_call_minutes', String(callMinutesUsed));
+  }
+
+  console.log(`📞 Call quota updated: +${minutes} min (${callType}) | Total: ${callMinutesUsed + videoMinutesUsed} min`);
+}
