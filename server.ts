@@ -174,11 +174,10 @@ const B2B_PLANS = {
 // ████  MÓDULO /AUTH — Autenticación JWT real  ████
 // ═══════════════════════════════════════════════
 // ═══════════════════════════════════════════════
-
 const registerSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z.string().min(8).max(100),
+  password: z.string().min(8).max(100).optional(),
   preferredLanguage: z.string().optional(),
   avatar: z.string().url().optional(),
 });
