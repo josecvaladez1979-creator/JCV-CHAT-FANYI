@@ -156,3 +156,78 @@ export function getTodayTranslations(): number {
   return parseInt(localStorage.getItem('jcv_quota_translations') || '0', 10);
 }
 export { PLAN_LIMITS as B2C_PLAN_LIMITS }; // Alias para compatibilidad
+
+// ═══════════════════════════════════════════════
+// FUNCIONES DE COMPATIBILIDAD (usadas por ChatArea.tsx)
+// ═══════════════════════════════════════════════
+
+/**
+ * Normaliza el plan del usuario a un ID válido de PLAN_LIMITS
+ * Mapea planes legacy (pro_15d, pro_1m, etc) a los nuevos (B2C_15D, B2C_1M, etc)
+ */
+export function normalizePlan(planInput?: string): B2CPlanId | 'FREEMIUM' {
+  if (!planInput) return 'FREEMIUM';
+
+  // Mapeo de planes legacy a nuevos
+  const planMap: Record<string, B2CPlanId | 'FREEMIUM'> = {
+    'freemium': 'FREEMIUM',
+    'free': 'FREEMIUM',
+    'express': 'B2C_15D',
+    'semanal': 'B2C_15D',
+    '15d': 'B2C_15D',
+    'pro_15d': 'B2C_15D',
+    'mensual': 'B2C_1M',
+    '1m': 'B2C_1M',
+    'pro_1m': 'B2C_1M',
+    'anual': 'B2C_1Y',
+    '1y': 'B2C_1Y',
+    'pro_1y': 'B2C_1Y',
+    'B2C_15D': 'B2C_15D',
+    'B2C_1M': 'B2C_1M',
+    'B2C_1Y': 'B2C_1Y',
+  };
+
+  return planMap[planInput] || 'FREEMIUM';
+}
+
+/**
+ * Incrementa el contador de traducciones y retorna el nuevo estado de quota
+ * Usado por ChatArea.tsx cuando el usuario envía un mensaje
+ */
+export function incrementTranslationQuota(planInput?: string): QuotaStatus {
+  const plan = normalizePlan(planInput);
+  const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.FREEMIUM;
+
+  // Incrementar contador en localStorage
+  const today = new Date().toISOString().slice(0, 10);
+  const storedDay = localStorage.getItem('jcv_quota_day');
+  let used = 0;
+
+  if (storedDay === today) {
+    used = parseInt(localStorage.getItem('jcv_quota_translations') || '0', 10);
+  }
+
+  used += 1;
+  localStorage.setItem('jcv_quota_day', today);
+  localStorage.setItem('jcv_quota_translations', String(used));
+
+  // Retornar el nuevo estado de quota
+  if (limits.isUnlimitedTranslations) {
+    return {
+      used,
+      limit: 999999,
+      remaining: 999999,
+      percent: 0,
+      is80Percent: false,
+      isExhausted: false,
+    };
+  }
+
+  const limit = limits.translationsLimit;
+  const remaining = Math.max(0, limit - used);
+  const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+  const is80Percent = percent >= 80 && percent < 100;
+  const isExhausted = used >= limit;
+
+  return { used, limit, remaining, percent, is80Percent, isExhausted };
+      }
