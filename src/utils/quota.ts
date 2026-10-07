@@ -271,3 +271,40 @@ export function incrementCallQuota(
 
   console.log(`📞 Call quota updated: +${minutes} min (${callType}) | Total: ${callMinutesUsed + videoMinutesUsed} min`);
 }
+// ═══════════════════════════════════════════════
+// B2B VAULT — Pack 10 Contratos (JCV FĀNYÌ VAULT)
+// ═══════════════════════════════════════════════
+
+/**
+ * Retorna cuántos contratos quedan en el Pack 10 B2B
+ * Se inicializa con 10 si es la primera vez
+ */
+export function getB2BPack10Remaining(): number {
+  const stored = localStorage.getItem('jcv_b2b_pack10_remaining');
+  if (stored === null) {
+    // Primera vez: inicializar con 10 contratos
+    localStorage.setItem('jcv_b2b_pack10_remaining', '10');
+    return 10;
+  }
+  const value = parseInt(stored, 10);
+  return isNaN(value) ? 10 : value;
+}
+
+/**
+ * Consume 1 contrato del Pack 10 B2B
+ * Retorna el nuevo estado { remaining: number }
+ */
+export function consumeB2BPack10Contract(): { remaining: number } {
+  const current = getB2BPack10Remaining();
+  const newRemaining = Math.max(0, current - 1);
+  localStorage.setItem('jcv_b2b_pack10_remaining', String(newRemaining));
+  console.log(`📄 B2B Pack 10: contrato consumido, quedan ${newRemaining}`);
+  return { remaining: newRemaining };
+}
+
+/**
+ * Resetear el contador del Pack 10 (usado al renovar/comprar de nuevo)
+ */
+export function resetB2BPack10(): void {
+  localStorage.setItem('jcv_b2b_pack10_remaining', '10');
+}
