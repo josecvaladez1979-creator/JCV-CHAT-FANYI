@@ -43,25 +43,24 @@ app.use(cors({
   credentials: true,
 }));
 
-// ⚠️ CRÍTICO: Stripe webhook necesita body CRUDO (antes de express.json)
+// Stripe webhook necesita body crudo (antes de express.json)
 app.use('/api/payments/webhook/stripe', express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '30mb' }));
 
-// Rate limiters
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
-  message: { error: 'Demasiados intentos. Espera 15 minutos.' },
+  limit: 30,
+  message: { error: 'Too many attempts. Wait 15 minutes.' },
 });
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 200,
-  message: { error: 'Límite de peticiones alcanzado.' },
+  message: { error: 'Rate limit reached.' },
 });
 
 // ═══════════════════════════════════════════════
-// SSE — Server-Sent Events (Real-Time)
+// SSE (Server-Sent Events)
 // ═══════════════════════════════════════════════
 interface SSEClient {
   id: string;
@@ -73,11 +72,7 @@ let sseClients: SSEClient[] = [];
 function broadcastSSE(event: string, data: any) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach((client) => {
-    try {
-      client.res.write(payload);
-    } catch (err) {
-      // client disconnected
-    }
+    try { client.res.write(payload); } catch {}
   });
 }
 
@@ -124,19 +119,19 @@ declare global {
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'No autenticado' });
+  if (!token) return res.status(401).json({ error: 'Not authenticated' });
   try {
     req.user = verifyAccessToken(token);
     next();
   } catch {
-    return res.status(401).json({ error: 'Sesión expirada' });
+    return res.status(401).json({ error: 'Session expired' });
   }
 }
 
 function requireRole(...roles: string[]) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (!req.user) return res.status(401).json({ error: 'No autenticado' });
-    if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'Sin permisos' });
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
     next();
   };
 }
@@ -151,41 +146,34 @@ const todayKey = (): string => new Date().toISOString().slice(0, 10);
 // PLAN CATALOG
 // ═══════════════════════════════════════════════
 const B2C_PLANS = {
-  B2C_15D: { id: 'B2C_15D', name: 'B2C 15 días', durationDays: 15, priceCents: 1500, currency: 'usd',
-    features: ['Traducción ilimitada', '120 min voz', '120 min video', 'Cifrado E2EE'] },
-  B2C_1M: { id: 'B2C_1M', name: 'B2C 1 mes', durationDays: 30, priceCents: 2500, currency: 'usd',
-    features: ['Todo lo del 15d', '300 min voz', 'Soporte prioritario'] },
-  B2C_1Y: { id: 'B2C_1Y', name: 'B2C 1 año', durationDays: 365, priceCents: 19900, currency: 'usd',
-    features: ['Todo lo del 1m', '4200 min anuales', 'Ahorro 33%'] },
+  B2C_15D: { id: 'B2C_15D', name: 'B2C 15 days', durationDays: 15, priceCents: 1500, currency: 'usd',
+    features: ['Unlimited translation', '120 min voice', '120 min video', 'E2EE'] },
+  B2C_1M: { id: 'B2C_1M', name: 'B2C 1 month', durationDays: 30, priceCents: 2500, currency: 'usd',
+    features: ['Everything in 15d', '300 min voice', 'Priority support'] },
+  B2C_1Y: { id: 'B2C_1Y', name: 'B2C 1 year', durationDays: 365, priceCents: 19900, currency: 'usd',
+    features: ['Everything in 1m', '4200 min yearly', 'Save 33%'] },
 } as const;
 
 const B2B_PLANS = {
-  B2B_15D: { id: 'B2B_15D', name: 'B2B 15 días', durationDays: 15, priceCents: 2999, currency: 'usd', seats: 5,
-    features: ['5 usuarios', 'Panel admin', 'Estadísticas', 'Facturación'] },
-  B2B_1M: { id: 'B2B_1M', name: 'B2B 1 mes', durationDays: 30, priceCents: 5999, currency: 'usd', seats: 10,
-    features: ['10 usuarios', 'Gestión empleados', 'CFDI'] },
-  B2B_1Y: { id: 'B2B_1Y', name: 'B2B 1 año', durationDays: 365, priceCents: 59999, currency: 'usd', seats: 25,
-    features: ['25 usuarios', 'Todo del 1m', 'Ahorro anual'] },
+  B2B_15D: { id: 'B2B_15D', name: 'B2B 15 days', durationDays: 15, priceCents: 2999, currency: 'usd', seats: 5,
+    features: ['5 users', 'Admin panel', 'Statistics', 'Billing'] },
+  B2B_1M: { id: 'B2B_1M', name: 'B2B 1 month', durationDays: 30, priceCents: 5999, currency: 'usd', seats: 10,
+    features: ['10 users', 'Employee management', 'CFDI invoices'] },
+  B2B_1Y: { id: 'B2B_1Y', name: 'B2B 1 year', durationDays: 365, priceCents: 59999, currency: 'usd', seats: 25,
+    features: ['25 users', 'Everything in 1m', 'Annual savings'] },
 } as const;
 
 // ═══════════════════════════════════════════════
+// AUTH ENDPOINTS
 // ═══════════════════════════════════════════════
-// ═══════════════════════════════════════════════
-// ████  MÓDULO /AUTH — Autenticación JWT real  ████
-// ═══════════════════════════════════════════════
-// ═══════════════════════════════════════════════
+
+// Registro - password opcional para demo
 const registerSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
   password: z.string().min(8).max(100).optional(),
   preferredLanguage: z.string().optional(),
-  avatar: z.string().url().optional(),
-});
-
-const loginSchema = z.object({
-  email: z.string().email().optional(),
-  password: z.string().optional(),
-  userId: z.string().optional(), // legacy: login rápido por id
+  avatar: z.string().optional(),
 });
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
@@ -194,20 +182,32 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const email = data.email.toLowerCase().trim();
 
     const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) return res.status(409).json({ error: 'Ese email ya está registrado' });
+    if (existing) return res.status(409).json({ error: 'That email is already registered' });
 
-    const passwordHash = await bcrypt.hash(data.password, 12);
+    // Si no hay password, genera un hash "nopass:" para permitir login sin password (modo demo)
+    const passwordHash = data.password
+      ? await bcrypt.hash(data.password, 12)
+      : 'nopass:' + crypto.randomBytes(16).toString('hex');
+
     const user = await prisma.user.create({
       data: {
-        email, name: data.name.trim(), passwordHash, role: Role.USER,
-        preferredLanguage: data.preferredLanguage || 'es', avatar: data.avatar,
+        email,
+        name: data.name.trim(),
+        passwordHash,
+        role: Role.USER,
+        preferredLanguage: data.preferredLanguage || 'es',
+        avatar: data.avatar,
       },
     });
 
     const accessToken = signAccessToken(user);
     const refreshTokenRaw = signRefreshToken(user.id);
     await prisma.refreshToken.create({
-      data: { userId: user.id, tokenHash: sha256(refreshTokenRaw), expiresAt: addDays(new Date(), REFRESH_DAYS) },
+      data: {
+        userId: user.id,
+        tokenHash: sha256(refreshTokenRaw),
+        expiresAt: addDays(new Date(), REFRESH_DAYS),
+      },
     });
 
     res.cookie('refresh_token', refreshTokenRaw, refreshCookieOptions);
@@ -216,32 +216,43 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       token: accessToken,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Error al registrar' });
+    if (err && err.name === 'ZodError') {
+      return res.status(400).json({ error: 'Missing data: please provide your name and a valid email.' });
+    }
+    res.status(400).json({ error: err.message || 'Error registering user' });
   }
 });
 
+// Login - acepta cuentas con y sin password
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password, userId } = req.body;
     let user: any;
 
     if (userId) {
-      // Legacy: login rápido sin password (para pruebas)
       user = await prisma.user.findUnique({ where: { id: userId } });
-      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-    } else if (email && password) {
+      if (!user) return res.status(404).json({ error: 'User not found' });
+    } else if (email) {
       user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-      if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-        return res.status(401).json({ error: 'Credenciales incorrectas' });
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      const isPasswordless = String(user.passwordHash).startsWith('nopass:');
+      if (!isPasswordless) {
+        if (!password) return res.status(400).json({ error: 'Password required' });
+        const okPass = await bcrypt.compare(password, user.passwordHash);
+        if (!okPass) return res.status(401).json({ error: 'Invalid credentials' });
       }
     } else {
-      return res.status(400).json({ error: 'Email/password o userId requeridos' });
+      return res.status(400).json({ error: 'Email or userId required' });
     }
 
     const accessToken = signAccessToken(user);
     const refreshTokenRaw = signRefreshToken(user.id);
     await prisma.refreshToken.create({
-      data: { userId: user.id, tokenHash: sha256(refreshTokenRaw), expiresAt: addDays(new Date(), REFRESH_DAYS) },
+      data: {
+        userId: user.id,
+        tokenHash: sha256(refreshTokenRaw),
+        expiresAt: addDays(new Date(), REFRESH_DAYS),
+      },
     });
 
     res.cookie('refresh_token', refreshTokenRaw, refreshCookieOptions);
@@ -255,13 +266,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       token: accessToken,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Error al iniciar sesión' });
+    res.status(500).json({ error: err.message || 'Login error' });
   }
 });
 
 app.post('/api/auth/refresh', async (req, res) => {
   const raw = req.cookies?.refresh_token;
-  if (!raw) return res.status(401).json({ error: 'Sin sesión' });
+  if (!raw) return res.status(401).json({ error: 'No session' });
 
   const stored = await prisma.refreshToken.findUnique({
     where: { tokenHash: sha256(raw) },
@@ -269,15 +280,18 @@ app.post('/api/auth/refresh', async (req, res) => {
   });
   if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
     res.clearCookie('refresh_token', { path: '/api/auth' });
-    return res.status(401).json({ error: 'Sesión expirada' });
+    return res.status(401).json({ error: 'Session expired' });
   }
 
-  // Rotación: revocar token actual y emitir uno nuevo
   await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
   const accessToken = signAccessToken(stored.user);
   const newRefresh = signRefreshToken(stored.user.id);
   await prisma.refreshToken.create({
-    data: { userId: stored.user.id, tokenHash: sha256(newRefresh), expiresAt: addDays(new Date(), REFRESH_DAYS) },
+    data: {
+      userId: stored.user.id,
+      tokenHash: sha256(newRefresh),
+      expiresAt: addDays(new Date(), REFRESH_DAYS),
+    },
   });
 
   res.cookie('refresh_token', newRefresh, refreshCookieOptions);
@@ -316,7 +330,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     where: { id: req.user!.id },
     include: { subscriptionB2C: true, org: { include: { subscriptionB2B: true } } },
   });
-  if (!user) return res.status(404).json({ error: 'No encontrado' });
+  if (!user) return res.status(404).json({ error: 'Not found' });
   res.json({
     user: {
       id: user.id, name: user.name, email: user.email, role: user.role,
@@ -329,7 +343,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /FREEMIUM — Chat gratuito  ████
+// FREEMIUM MODULE
 // ═══════════════════════════════════════════════
 const FREEMIUM_LIMIT = { messagesPerDay: 10, maxCharsPerMessage: 500 };
 
@@ -348,7 +362,7 @@ app.get('/api/freemium/quota', requireAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /B2C — Suscripciones individuales  ████
+// B2C MODULE
 // ═══════════════════════════════════════════════
 app.get('/api/b2c/plans', async (_req, res) => {
   const configs = await prisma.planConfig.findMany();
@@ -368,7 +382,7 @@ app.get('/api/b2c/subscription', requireAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /B2B — Suscripciones empresariales  ████
+// B2B MODULE
 // ═══════════════════════════════════════════════
 app.get('/api/b2b/plans', async (_req, res) => {
   const configs = await prisma.planConfig.findMany();
@@ -380,15 +394,13 @@ app.get('/api/b2b/plans', async (_req, res) => {
 });
 
 app.get('/api/b2b/dashboard', requireAuth, async (req, res) => {
-  if (!req.user!.orgId) return res.status(404).json({ error: 'No perteneces a ninguna empresa' });
-
+  if (!req.user!.orgId) return res.status(404).json({ error: 'No organization' });
   const [org, sub, members, messageCount] = await Promise.all([
     prisma.organization.findUnique({ where: { id: req.user!.orgId } }),
     prisma.subscriptionB2B.findUnique({ where: { orgId: req.user!.orgId } }),
     prisma.user.count({ where: { orgId: req.user!.orgId } }),
     prisma.message.count({ where: { orgId: req.user!.orgId } }),
   ]);
-
   res.json({
     companyName: org?.companyName || '',
     subscription: sub,
@@ -411,23 +423,14 @@ app.post('/api/b2b/employees', requireAuth, requireRole('ORG_OWNER', 'ADMIN'), a
   try {
     const schema = z.object({ name: z.string(), email: z.string().email(), password: z.string().min(8) });
     const data = schema.parse(req.body);
-
-    if (!req.user!.orgId) return res.status(400).json({ error: 'No tienes empresa' });
-
+    if (!req.user!.orgId) return res.status(400).json({ error: 'No organization' });
     const sub = await prisma.subscriptionB2B.findUnique({ where: { orgId: req.user!.orgId } });
-    if (!sub || sub.status !== 'ACTIVE') {
-      return res.status(402).json({ error: 'Se requiere suscripción B2B activa' });
-    }
-
+    if (!sub || sub.status !== 'ACTIVE') return res.status(402).json({ error: 'Active B2B subscription required' });
     const count = await prisma.user.count({ where: { orgId: req.user!.orgId } });
-    if (count >= sub.seats) {
-      return res.status(409).json({ error: `Límite de puestos alcanzado (${sub.seats})` });
-    }
-
+    if (count >= sub.seats) return res.status(409).json({ error: `Seats limit reached (${sub.seats})` });
     const email = data.email.toLowerCase().trim();
     const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) return res.status(409).json({ error: 'Email ya registrado' });
-
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
     const employee = await prisma.user.create({
       data: {
         name: data.name, email, role: Role.ORG_MEMBER, orgId: req.user!.orgId,
@@ -443,12 +446,8 @@ app.post('/api/b2b/employees', requireAuth, requireRole('ORG_OWNER', 'ADMIN'), a
 
 app.delete('/api/b2b/employees/:id', requireAuth, requireRole('ORG_OWNER', 'ADMIN'), async (req, res) => {
   const employee = await prisma.user.findUnique({ where: { id: req.params.id } });
-  if (!employee || employee.orgId !== req.user!.orgId) {
-    return res.status(404).json({ error: 'Empleado no encontrado' });
-  }
-  if (employee.role === Role.ORG_OWNER) {
-    return res.status(400).json({ error: 'No puedes eliminar al propietario' });
-  }
+  if (!employee || employee.orgId !== req.user!.orgId) return res.status(404).json({ error: 'Employee not found' });
+  if (employee.role === Role.ORG_OWNER) return res.status(400).json({ error: 'Cannot remove owner' });
   await prisma.user.update({ where: { id: req.params.id }, data: { orgId: null, role: Role.USER } });
   res.status(204).send();
 });
@@ -463,7 +462,7 @@ app.get('/api/b2b/stats', requireAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /PAYMENTS — Stripe, PayPal, MP  ████
+// PAYMENTS MODULE
 // ═══════════════════════════════════════════════
 function getStripe(): Stripe | null {
   if (!process.env.STRIPE_SECRET_KEY) return null;
@@ -475,7 +474,7 @@ function getMercadoPago(): MercadoPagoConfig | null {
   return new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
 }
 
-// Checkout B2C
+// B2C Checkout
 app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
   try {
     const schema = z.object({
@@ -487,11 +486,9 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
 
     if (gateway === 'stripe') {
       const stripe = getStripe();
-      if (!stripe) return res.status(503).json({ error: 'Stripe no configurado' });
-
+      if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
       const priceId = process.env[`STRIPE_PRICE_${planId}`];
-      if (!priceId) return res.status(500).json({ error: `Falta STRIPE_PRICE_${planId} en .env` });
-
+      if (!priceId) return res.status(500).json({ error: `Missing STRIPE_PRICE_${planId} in .env` });
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer_email: req.user!.email,
@@ -501,13 +498,11 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
         success_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=stripe`,
         cancel_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/cancelado`,
       });
-
       return res.json({ url: session.url, orderId: session.id });
     }
 
     if (gateway === 'paypal') {
       const orderId = `PAYPAL_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      // PayPal se maneja vía webhook de captura real
       return res.json({
         url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/paypal?orderId=${orderId}&planId=${planId}`,
         orderId,
@@ -516,12 +511,11 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
 
     if (gateway === 'mercadopago') {
       const mp = getMercadoPago();
-      if (!mp) return res.status(503).json({ error: 'Mercado Pago no configurado' });
-
+      if (!mp) return res.status(503).json({ error: 'Mercado Pago not configured' });
       const preApproval = new PreApproval(mp);
       const result = await preApproval.create({
         body: {
-          reason: `JCV FĀNYÌ - ${plan.name}`,
+          reason: `JCV FANYI - ${plan.name}`,
           external_reference: JSON.stringify({ planId, segment: 'B2C', userId: req.user!.id }),
           payer_email: req.user!.email,
           auto_recurring: {
@@ -540,7 +534,7 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
   }
 });
 
-// Checkout B2B
+// B2B Checkout
 app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
   try {
     const schema = z.object({
@@ -551,7 +545,6 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
     const { companyName, planId, gateway } = schema.parse(req.body);
     const plan = B2B_PLANS[planId];
 
-    // Crear o vincular org
     let orgId = req.user!.orgId;
     if (!orgId) {
       const org = await prisma.organization.create({ data: { companyName } });
@@ -564,10 +557,9 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
 
     if (gateway === 'stripe') {
       const stripe = getStripe();
-      if (!stripe) return res.status(503).json({ error: 'Stripe no configurado' });
+      if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
       const priceId = process.env[`STRIPE_PRICE_${planId}`];
-      if (!priceId) return res.status(500).json({ error: `Falta STRIPE_PRICE_${planId}` });
-
+      if (!priceId) return res.status(500).json({ error: `Missing STRIPE_PRICE_${planId}` });
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer_email: req.user!.email,
@@ -582,18 +574,18 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
 
     if (gateway === 'mercadopago') {
       const mp = getMercadoPago();
-      if (!mp) return res.status(503).json({ error: 'MP no configurado' });
+      if (!mp) return res.status(503).json({ error: 'MP not configured' });
       const pa = new PreApproval(mp);
       const result = await pa.create({
         body: {
-          reason: `JCV FĀNYÌ B2B - ${plan.name} - ${companyName}`,
+          reason: `JCV FANYI B2B - ${plan.name} - ${companyName}`,
           external_reference: JSON.stringify({ planId, segment: 'B2B', userId: req.user!.id, orgId }),
           payer_email: req.user!.email,
           auto_recurring: {
             frequency: plan.durationDays <= 15 ? 15 : plan.durationDays <= 31 ? 1 : 12,
             frequency_type: (plan.durationDays <= 15 ? 'days' : plan.durationDays <= 31 ? 'months' : 'years') as 'days' | 'months',
             transaction_amount: plan.priceCents / 100,
-            currency_id: 'MXN',
+            currency_id: 'USD',
           },
           back_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=mercadopago`,
         },
@@ -601,23 +593,20 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
       return res.json({ url: result.init_point, orderId: String(result.id) });
     }
 
-    res.status(400).json({ error: 'Gateway no soportado para B2B' });
+    res.status(400).json({ error: 'Gateway not supported for B2B' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
 // ═══════════════════════════════════════════════
-// WEBHOOKS REALES
+// WEBHOOKS
 // ═══════════════════════════════════════════════
-
-// Stripe webhook
 app.post('/api/payments/webhook/stripe', async (req, res) => {
   const stripe = getStripe();
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
-    return res.status(503).json({ error: 'No configurado' });
+    return res.status(503).json({ error: 'Not configured' });
   }
-
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(
@@ -626,10 +615,8 @@ app.post('/api/payments/webhook/stripe', async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET,
     );
   } catch {
-    return res.status(400).json({ error: 'Firma inválida' });
+    return res.status(400).json({ error: 'Invalid signature' });
   }
-
-  // Idempotencia
   const seen = await prisma.webhookEvent.findUnique({
     where: { provider_eventId: { provider: 'STRIPE', eventId: event.id } },
   });
@@ -642,8 +629,7 @@ app.post('/api/payments/webhook/stripe', async (req, res) => {
       const userId = session.client_reference_id;
       const subId = typeof session.subscription === 'string'
         ? session.subscription : (session.subscription as Stripe.Subscription)?.id;
-
-      if (!planId || !userId || !subId) throw new Error('Metadata incompleta');
+      if (!planId || !userId || !subId) throw new Error('Incomplete metadata');
 
       if (segment === 'B2C') {
         const plan = B2C_PLANS[planId as keyof typeof B2C_PLANS];
@@ -684,7 +670,6 @@ app.post('/api/payments/webhook/stripe', async (req, res) => {
           },
         });
       }
-
       broadcastSSE('subscription_activated', { userId, planId, segment });
     }
 
@@ -693,7 +678,6 @@ app.post('/api/payments/webhook/stripe', async (req, res) => {
       const subId = typeof invoice.subscription === 'string'
         ? invoice.subscription : (invoice.subscription as Stripe.Subscription)?.id;
       if (subId) {
-        // Renovación: extender fecha
         const b2c = await prisma.subscriptionB2C.findFirst({ where: { externalId: subId } });
         if (b2c) {
           const plan = B2C_PLANS[b2c.plan as keyof typeof B2C_PLANS];
@@ -733,17 +717,15 @@ app.post('/api/payments/webhook/stripe', async (req, res) => {
     res.json({ received: true });
   } catch (err) {
     console.error('[stripe-webhook]', err);
-    res.status(500).json({ error: 'Error procesando webhook' });
+    res.status(500).json({ error: 'Webhook processing error' });
   }
 });
 
-// Mercado Pago webhook
 app.post('/api/payments/webhook/mercadopago', async (req, res) => {
   const type = (req.query.type as string) || (req.body?.type as string);
   const dataId = (req.query['data.id'] as string) || (req.body?.data?.id as string);
   if (type !== 'preapproval' || !dataId) return res.json({ received: true });
 
-  // Verificar firma HMAC
   if (process.env.MP_WEBHOOK_SECRET) {
     const header = req.headers['x-signature'] as string;
     const requestId = (req.headers['x-request-id'] as string) || '';
@@ -754,39 +736,33 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
         const manifest = `id:${dataId}.request-id:${requestId}.ts:${ts};`;
         const hmac = crypto.createHmac('sha256', process.env.MP_WEBHOOK_SECRET).update(manifest).digest('hex');
         if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(v1))) {
-          return res.status(400).json({ error: 'Firma inválida' });
+          return res.status(400).json({ error: 'Invalid signature' });
         }
       }
     }
   }
 
   const mp = getMercadoPago();
-  if (!mp) return res.status(503).json({ error: 'MP no configurado' });
+  if (!mp) return res.status(503).json({ error: 'MP not configured' });
 
   let preapproval: any;
   try {
     preapproval = await new PreApproval(mp).get({ id: dataId });
   } catch {
-    return res.status(502).json({ error: 'No se pudo verificar' });
+    return res.status(502).json({ error: 'Could not verify' });
   }
-
-  if (preapproval.status !== 'authorized') {
-    return res.json({ received: true, status: preapproval.status });
-  }
+  if (preapproval.status !== 'authorized') return res.json({ received: true, status: preapproval.status });
 
   let meta: any;
   try { meta = JSON.parse(preapproval.external_reference || '{}'); } catch {
-    return res.status(400).json({ error: 'external_reference inválido' });
+    return res.status(400).json({ error: 'Invalid external_reference' });
   }
-  if (!meta.planId || !meta.userId || !meta.segment) {
-    return res.status(400).json({ error: 'Metadata incompleta' });
-  }
+  if (!meta.planId || !meta.userId || !meta.segment) return res.status(400).json({ error: 'Incomplete metadata' });
 
   const existing = await prisma.subscriptionB2C.findFirst({ where: { externalId: dataId } })
     || await prisma.subscriptionB2B.findFirst({ where: { externalId: dataId } });
 
   if (existing) {
-    // Renovación
     if ('userId' in existing) {
       const plan = B2C_PLANS[existing.plan as keyof typeof B2C_PLANS];
       const base = existing.expiresAt > new Date() ? existing.expiresAt : new Date();
@@ -803,7 +779,6 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
       });
     }
   } else {
-    // Activación inicial
     if (meta.segment === 'B2C') {
       const plan = B2C_PLANS[meta.planId as keyof typeof B2C_PLANS];
       await prisma.subscriptionB2C.upsert({
@@ -836,22 +811,14 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
   await prisma.webhookEvent.create({
     data: { provider: 'MERCADOPAGO', eventId: `mp_${dataId}_${Date.now()}`, type: 'preapproval', payload: { status: preapproval.status } as any, processedAt: new Date() },
   }).catch(() => {});
-
   res.json({ received: true });
 });
 
-// PayPal webhook (simplificado — usar verificación real en producción)
 app.post('/api/payments/webhook/paypal', async (req, res) => {
-  // En producción, verificar firma con API de PayPal
-  // Por ahora: aceptar eventos CHECKOUT.ORDER.APPROVED
   const eventType = req.body?.event_type;
   if (eventType !== 'CHECKOUT.ORDER.APPROVED') return res.json({ received: true });
-
   const orderId = req.body?.resource?.id;
-  if (!orderId) return res.status(400).json({ error: 'Sin orderId' });
-
-  // Buscar orden por metadata
-  // Implementación simplificada: requerir captura manual vía frontend
+  if (!orderId) return res.status(400).json({ error: 'No orderId' });
   res.json({ received: true, requires_capture: true, orderId });
 });
 
@@ -864,7 +831,7 @@ app.get('/api/payments/providers', (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /ADMIN — Panel administrativo  ████
+// ADMIN MODULE
 // ═══════════════════════════════════════════════
 app.get('/api/admin/stats', requireAuth, requireRole('ADMIN'), async (_req, res) => {
   const now = new Date();
@@ -890,21 +857,18 @@ app.patch('/api/admin/plans/:planId', requireAuth, requireRole('ADMIN'), async (
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULOS LEGACY (AI, Translation, Chat)  ████
+// AI & TRANSLATION MODULE
 // ═══════════════════════════════════════════════
-
-// SiliconFlow Status
 app.get('/api/siliconflow/status', (_req, res) => {
   res.json({
     hasApiKey: Boolean(process.env.SILICONFLOW_API_KEY),
     defaultModel: 'Qwen/Qwen3-32B-Instruct',
     audioModel: 'Qwen/Qwen2-Audio-7B-Instruct',
-    provider: 'SiliconFlow (硅基流动)',
+    provider: 'SiliconFlow',
     accuracy: '99%',
   });
 });
 
-// Translation con IA
 let geminiAI: GoogleGenAI | null = null;
 function getGeminiAI() {
   if (!geminiAI) {
@@ -914,9 +878,9 @@ function getGeminiAI() {
 }
 
 const targetLangNames: Record<string, string> = {
-  es: 'Español de México', en: 'English', zh: '中文', ja: '日本語',
-  fr: 'Français', de: 'Deutsch', pt: 'Português', it: 'Italiano',
-  ru: 'Русский', ko: '한국어', ar: 'العربية', hi: 'हिन्दी',
+  es: 'Mexican Spanish', en: 'English', zh: 'Chinese', ja: 'Japanese',
+  fr: 'French', de: 'German', pt: 'Portuguese', it: 'Italian',
+  ru: 'Russian', ko: 'Korean', ar: 'Arabic', hi: 'Hindi',
 };
 
 async function translateWithGemini(text: string, targetLang: string, systemInstruction?: string): Promise<string | null> {
@@ -927,7 +891,7 @@ async function translateWithGemini(text: string, targetLang: string, systemInstr
       model: 'gemini-2.5-flash',
       contents: text,
       config: {
-        systemInstruction: systemInstruction || `You are JCV CHAT FĀNYÌ. Translate to ${targetLangNames[targetLang] || targetLang}. Output ONLY the translated text.`,
+        systemInstruction: systemInstruction || `You are JCV CHAT FANYI. Translate to ${targetLangNames[targetLang] || targetLang}. Output ONLY the translated text.`,
         temperature: 0.2,
       },
     });
@@ -974,26 +938,26 @@ app.post('/api/siliconflow/audio', async (req, res) => {
   const { audioBase64, targetLang = 'es' } = req.body;
   if (!audioBase64) return res.status(400).json({ error: 'audioBase64 required' });
   res.json({
-    transcription: 'Audio procesado',
+    transcription: 'Audio processed',
     translatedText: 'Voice note received',
     modelUsed: 'Qwen2-Audio',
   });
 });
 
-// SSE stream
+// ═══════════════════════════════════════════════
+// CHAT MODULE (SSE + Messages + Channels)
+// ═══════════════════════════════════════════════
 app.get('/api/chat/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-
   const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   sseClients.push({ id: clientId, res });
   res.write(`event: connected\ndata: ${JSON.stringify({ clientId, timestamp: Date.now() })}\n\n`);
   req.on('close', () => { sseClients = sseClients.filter((c) => c.id !== clientId); });
 });
 
-// Channels (con DB)
 app.get('/api/chat/channels', async (_req, res) => {
   const channels = await prisma.channel.findMany({ orderBy: { createdAt: 'asc' } });
   res.json({ channels });
@@ -1001,7 +965,7 @@ app.get('/api/chat/channels', async (_req, res) => {
 
 app.post('/api/chat/channels', requireAuth, async (req, res) => {
   const { name, description, isE2EE = false } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nombre requerido' });
+  if (!name) return res.status(400).json({ error: 'Name required' });
   const cleanName = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '');
   const channel = await prisma.channel.create({
     data: { name: cleanName, description: description || '', isE2EE },
@@ -1010,7 +974,6 @@ app.post('/api/chat/channels', requireAuth, async (req, res) => {
   res.json({ channel });
 });
 
-// Messages (con DB + persistencia)
 app.get('/api/chat/messages', async (req, res) => {
   const { channelId } = req.query;
   const where = channelId ? { channelId: channelId as string } : {};
@@ -1046,17 +1009,14 @@ app.get('/api/chat/messages', async (req, res) => {
 app.post('/api/chat/messages', requireAuth, async (req, res) => {
   try {
     const { channelId, text, isE2EE, encryptedPayload, isAudio, audioBase64, audioDuration, skipTranslation } = req.body;
-    if (!channelId || !req.user) return res.status(400).json({ error: 'Parámetros faltantes' });
+    if (!channelId || !req.user) return res.status(400).json({ error: 'Missing params' });
 
-    // Determinar módulo según suscripción del usuario
     const b2c = await prisma.subscriptionB2C.findUnique({ where: { userId: req.user.id } });
     const b2b = req.user.orgId ? await prisma.subscriptionB2B.findUnique({ where: { orgId: req.user.orgId } }) : null;
-
     let module: MessageModule = MessageModule.FREEMIUM;
     if (b2c && b2c.status === 'ACTIVE' && b2c.expiresAt > new Date()) module = MessageModule.B2C;
     else if (b2b && b2b.status === 'ACTIVE' && b2b.expiresAt > new Date()) module = MessageModule.B2B;
 
-    // Limitar freemium
     if (module === MessageModule.FREEMIUM && !isE2EE && text) {
       const day = todayKey();
       const usage = await prisma.freemiumUsage.upsert({
@@ -1065,10 +1025,10 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
         create: { userId: req.user.id, day },
       });
       if (usage.translationsUsed >= FREEMIUM_LIMIT.messagesPerDay) {
-        return res.status(429).json({ error: 'Límite diario alcanzado. Mejora tu plan.' });
+        return res.status(429).json({ error: 'Daily limit reached. Upgrade your plan.' });
       }
       if (text.length > FREEMIUM_LIMIT.maxCharsPerMessage) {
-        return res.status(413).json({ error: `Máx ${FREEMIUM_LIMIT.maxCharsPerMessage} caracteres en plan gratuito` });
+        return res.status(413).json({ error: `Max ${FREEMIUM_LIMIT.maxCharsPerMessage} chars in free plan` });
       }
       await prisma.freemiumUsage.update({
         where: { userId_day: { userId: req.user.id, day } },
@@ -1089,7 +1049,6 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
       },
     });
 
-    // Traducción en background
     if (!isE2EE && text && text.trim() && !skipTranslation) {
       const targetLangs = ['es', 'en', 'zh', 'ja', 'fr'].filter((l) => l !== user?.preferredLanguage);
       const translations: Record<string, string> = {};
@@ -1133,7 +1092,7 @@ app.post('/api/chat/messages/:id/reaction', async (req, res) => {
   const { id } = req.params;
   const { emoji, userId } = req.body;
   const msg = await prisma.message.findUnique({ where: { id } });
-  if (!msg) return res.status(404).json({ error: 'Mensaje no encontrado' });
+  if (!msg) return res.status(404).json({ error: 'Message not found' });
   const reactions = (msg.reactions as Record<string, string[]>) || {};
   if (!reactions[emoji]) reactions[emoji] = [];
   const idx = reactions[emoji].indexOf(userId);
@@ -1150,32 +1109,29 @@ app.post('/api/webrtc/signal', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// ████  MÓDULO /VAULT (legacy — mantiene tu B2B Vault)  ████
+// VAULT MODULE
 // ═══════════════════════════════════════════════
 app.get('/api/vault/plans', (_req, res) => {
   res.json({
     plans: {
-      individual_20p: { id: 'individual_20p', name: 'Individual 20 págs', priceMxn: 4499, priceUsd: 229 },
-      individual_100p: { id: 'individual_100p', name: 'Individual Pro 100 págs', priceMxn: 7499, priceUsd: 379 },
-      pack_10: { id: 'pack_10', name: 'Pack 10 Contratos', priceMxn: 39999, priceUsd: 2049 },
+      individual_20p: { id: 'individual_20p', name: 'Individual 20 pages', priceMxn: 4499, priceUsd: 229 },
+      individual_100p: { id: 'individual_100p', name: 'Individual Pro 100 pages', priceMxn: 7499, priceUsd: 379 },
+      pack_10: { id: 'pack_10', name: 'Pack 10 Contracts', priceMxn: 39999, priceUsd: 2049 },
     },
-    taxNotice: 'Precios en MXN. CFDI + IVA 16% incluido.',
+    taxNotice: 'Prices in MXN. CFDI + 16% VAT included.',
     gateways: ['mercadopago', 'stripe', 'paypal'],
   });
 });
 
 app.post('/api/vault/translate', async (req, res) => {
   const { documentName, content, sourceLang = 'en', targetLang = 'es' } = req.body;
-  if (!content) return res.status(400).json({ error: 'Contenido requerido' });
-
+  if (!content) return res.status(400).json({ error: 'Content required' });
   let translated = await translateWithGemini(
     content,
     targetLang,
     `Translate legal contract from ${sourceLang} to ${targetLang}. Keep legal terminology, numbering, and formatting. Output ONLY translated text.`,
   );
-
-  if (!translated) translated = `[TRADUCCIÓN JURÍDICA]\n\n${content}`;
-
+  if (!translated) translated = `[LEGAL TRANSLATION]\n\n${content}`;
   res.json({
     success: true, documentName, translatedContract: translated,
     e2eeProtected: true, algorithm: 'AES-GCM-256', timestamp: Date.now(),
@@ -1193,10 +1149,9 @@ app.post('/api/vault/certificates', async (req, res) => {
   const destroyedAt = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear()} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   const cleanHash = hash || Math.random().toString(36).slice(2, 15);
   const shortHash = cleanHash.length > 10 ? `${cleanHash.slice(0, 4)}...${cleanHash.slice(-4)}` : cleanHash;
-
   const cert = await prisma.vaultCertificate.create({
     data: {
-      documentName: documentName || 'Contrato.pdf',
+      documentName: documentName || 'Contract.pdf',
       destroyedAt, hash: cleanHash, shortHash,
       pages: pages || 12, timerSelected: timerSelected || '3h',
       packRemaining: packRemaining || '1/10',
@@ -1208,9 +1163,77 @@ app.post('/api/vault/certificates', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// BOOTSTRAP DEMO DATA
+// ═══════════════════════════════════════════════
+async function bootstrapDemoData() {
+  try {
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      await prisma.user.createMany({
+        data: [
+          {
+            email: 'josecvaladez1979@gmail.com',
+            name: 'Jose Carlos (JCV)',
+            passwordHash: 'nopass:demo-jc',
+            preferredLanguage: 'es',
+            role: Role.ADMIN,
+            avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+          },
+          {
+            email: 'yuki.tanaka@tokyo-lab.jp',
+            name: 'Yuki Tanaka',
+            passwordHash: 'nopass:demo-yuki',
+            preferredLanguage: 'ja',
+            avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+          },
+          {
+            email: 'sarah.j@siliconvalley.io',
+            name: 'Sarah Jenkins',
+            passwordHash: 'nopass:demo-sarah',
+            preferredLanguage: 'en',
+            avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
+          },
+          {
+            email: 'li.wei@beijing-tech.cn',
+            name: 'Li Wei',
+            passwordHash: 'nopass:demo-liwei',
+            preferredLanguage: 'zh',
+            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+          },
+          {
+            email: 'jean.dupont@paris.fr',
+            name: 'Jean Dupont',
+            passwordHash: 'nopass:demo-jean',
+            preferredLanguage: 'fr',
+            avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
+          },
+        ],
+      });
+      console.log('5 demo users created in database');
+    }
+
+    const channelCount = await prisma.channel.count();
+    if (channelCount === 0) {
+      await prisma.channel.createMany({
+        data: [
+          { name: 'general-fanyi', description: 'Global real-time translation room' },
+          { name: 'qwen3-tests', description: 'Qwen3-32B and Qwen2-Audio test channel' },
+          { name: 'business-e2ee', description: 'Ultra-secure E2EE channel with AES-GCM 256-bit', isE2EE: true },
+        ],
+      });
+      console.log('3 demo channels created in database');
+    }
+  } catch (err) {
+    console.error('Could not create demo data (check DATABASE_URL):', err);
+  }
+}
+
+// ═══════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════
 async function startServer() {
+  await bootstrapDemoData();
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {
@@ -1229,9 +1252,9 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ JCV CHAT FĀNYÌ Server running at http://0.0.0.0:${PORT}`);
-    console.log(`📊 Database: PostgreSQL connected`);
-    console.log(`🔐 JWT auth enabled | Refresh tokens: ${REFRESH_DAYS}d`);
+    console.log(`JCV CHAT FANYI Server running at http://0.0.0.0:${PORT}`);
+    console.log(`Database: PostgreSQL connected`);
+    console.log(`JWT auth enabled | Refresh tokens: ${REFRESH_DAYS}d`);
   });
 }
 
