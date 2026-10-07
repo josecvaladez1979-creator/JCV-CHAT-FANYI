@@ -529,7 +529,7 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
             frequency: plan.durationDays <= 15 ? 15 : plan.durationDays <= 31 ? 1 : 12,
             frequency_type: (plan.durationDays <= 15 ? 'days' : plan.durationDays <= 31 ? 'months' : 'years') as 'days' | 'months',
             transaction_amount: plan.priceCents / 100,
-            currency_id: 'MXN,
+            currency_id: 'USD',
           },
           back_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=mercadopago`,
         },
