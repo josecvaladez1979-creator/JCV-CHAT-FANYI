@@ -155,3 +155,4 @@ export function getTodayTranslations(): number {
   if (storedDay !== today) return 0;
   return parseInt(localStorage.getItem('jcv_quota_translations') || '0', 10);
 }
+export { PLAN_LIMITS as B2C_PLAN_LIMITS }; // Alias para compatibilidad
