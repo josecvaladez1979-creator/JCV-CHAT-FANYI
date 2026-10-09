@@ -854,18 +854,22 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
       },
     });
 
-    if (!isE2EE && text && text.trim() && !skipTranslation) {
+        if (!isE2EE && text && text.trim() && !skipTranslation) {
       const targetLangs = ['es', 'en', 'zh', 'ja', 'fr'].filter((l) => l !== user?.preferredLanguage);
-      const translations: Record<string, string> = {};
-      await Promise.all(targetLangs.map(async (tLang) => {
+      Promise.all(targetLangs.map(async (tLang) => {
         try {
           const trans = await translateWithSiliconFlow(text, tLang, user?.preferredLanguage);
-          translations[tLang] = trans.translatedText;
-        } catch {}
-      }));
-      await prisma.message.update({ where: { id: newMsg.id }, data: { translations } });
-      broadcastSSE('message_translated', { messageId: newMsg.id, translations });
-    }
+          return { tLang, translatedText: trans.translatedText };
+        } catch { return null; }
+      }))
+        .then(async (results) => {
+          const translations: Record<string, string> = {};
+          results.forEach((r) => { if (r) translations[r.tLang] = r.translatedText; });
+          await prisma.message.update({ where: { id: newMsg.id }, data: { translations } });
+          broadcastSSE('message_translated', { messageId: newMsg.id, translations });
+        })
+        .catch(() => {});
+                                      }
 
     const fullMsg = {
       id: newMsg.id, channelId: newMsg.channelId, senderId: userId,
