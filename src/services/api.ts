@@ -80,7 +80,8 @@ export const api = {
 
   async getChannels() {
     const res = await request('/api/chat/channels');
-    return res.json();
+    const data = await res.json();
+    return data.channels;
   },
 
   async createChannel(name: string, description: string, isE2EE = false) {
@@ -89,12 +90,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description, isE2EE }),
     });
-    return res.json();
+    const data = await res.json();
+    return data.channel;
   },
 
   async getMessages(channelId: string) {
     const res = await request('/api/chat/messages?channelId=' + encodeURIComponent(channelId));
-    return res.json();
+    const data = await res.json();
+    return data.messages;
   },
 
   async sendMessage(messageData: any) {
@@ -103,12 +106,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(messageData),
     });
-    return jsonOrThrow(res, 'Failed to send message');
+    const data = await jsonOrThrow(res, 'Failed to send message');
+    return data.message;
   },
 
   async getUsers() {
     const res = await request('/api/auth/users');
-    return res.json();
+    const data = await res.json();
+    return data.users;
   },
 
   async login(params: { email?: string; userId?: string; password?: string }) {
@@ -134,12 +139,26 @@ export const api = {
   },
 
   async createCheckout(cycle: string, gateway: string, userId: string) {
-    const res = await request('/api/subscriptions/checkout', {
+    const isB2B = cycle === 'anual' || cycle === '1y';
+    const planId = isB2B ? 'B2B_1Y' : (cycle === 'mensual' || cycle === '1m' ? 'B2C_1M' : 'B2C_15D');
+    const body = isB2B
+      ? { companyName: 'Mi Empresa', planId, gateway }
+      ? { companyName: 'Mi Empresa', planId, gateway }
+      : { planId, gateway };
+    const path = isB2B ? '/api/b2b/checkout' : '/api/b2c/checkout';
+    const res = await request(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cycle, gateway, userId }),
+      body: JSON.stringify(body),
     });
-    return res.json();
+    const data = await jsonOrThrow(res, 'Checkout creation failed');
+    return { orderId: data.orderId, checkoutUrl: data.url, cycle, gateway };
+  },
+
+  async confirmSubscription(userId: string, cycle: string, gateway: string, orderId: string) {
+    const res = await request('/api/auth/me');
+    const data = await res.json();
+    return { success: true, user: data.user, orderId };
   },
 
   async getVaultPlans() {
@@ -153,7 +172,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ planId, gateway, clientEmail, rfc }),
     });
-    return res.json();
+    return jsonOrThrow(res, 'Vault checkout failed');
   },
 
   async translateVaultContract(params: any) {
@@ -167,7 +186,8 @@ export const api = {
 
   async getVaultCertificates() {
     const res = await request('/api/vault/certificates');
-    return res.json();
+    const data = await res.json();
+    return data.certificates;
   },
 
   async recordDestructionCertificate(params: any) {
@@ -176,7 +196,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
-    return res.json();
+    const data = await res.json();
+    return data.certificate;
   },
 
   async sendWebRTCSignal(signalData: any) {
