@@ -4,12 +4,12 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
-import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
 import Stripe from 'stripe';
 import { MercadoPagoConfig, PreApproval } from 'mercadopago';
 import { PrismaClient, Role, SubscriptionStatus, PaymentProvider, MessageModule } from '@prisma/client';
@@ -21,9 +21,6 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ═══════════════════════════════════════════════
-// CONFIG
-// ═══════════════════════════════════════════════
 const prisma = new PrismaClient();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -33,54 +30,25 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret
 const ACCESS_TTL = '15m';
 const REFRESH_DAYS = 30;
 
-// ═══════════════════════════════════════════════
-// MIDDLEWARES
-// ═══════════════════════════════════════════════
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || '*',
-  credentials: true,
-}));
-
-// Stripe webhook necesita body crudo (antes de express.json)
+app.use(cors({ origin: process.env.CLIENT_ORIGIN || '*', credentials: true }));
 app.use('/api/payments/webhook/stripe', express.raw({ type: 'application/json' }));
-
 app.use(cookieParser());
 app.use(express.json({ limit: '30mb' }));
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 30,
-  message: { error: 'Too many attempts. Wait 15 minutes.' },
-});
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 200,
-  message: { error: 'Rate limit reached.' },
-});
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, message: { error: 'Too many attempts.' } });
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 200, message: { error: 'Rate limit reached.' } });
 
-// ═══════════════════════════════════════════════
-// SSE (Server-Sent Events)
-// ═══════════════════════════════════════════════
-interface SSEClient {
-  id: string;
-  res: express.Response;
-  userId?: string;
-}
+interface SSEClient { id: string; res: express.Response; userId?: string; }
 let sseClients: SSEClient[] = [];
 
 function broadcastSSE(event: string, data: any) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  sseClients.forEach((client) => {
-    try { client.res.write(payload); } catch {}
-  });
+  sseClients.forEach((client) => { try { client.res.write(payload); } catch {} });
 }
 
-// ═══════════════════════════════════════════════
-// JWT HELPERS
-// ═══════════════════════════════════════════════
 function signAccessToken(user: { id: string; email: string; role: string; orgId?: string | null }) {
   return jwt.sign(
     { sub: user.id, email: user.email, role: user.role, orgId: user.orgId },
@@ -93,8 +61,10 @@ function signRefreshToken(userId: string) {
   return jwt.sign({ sub: userId, type: 'refresh' }, JWT_REFRESH_SECRET, { expiresIn: `${REFRESH_DAYS}d` });
 }
 
-function verifyAccessToken(token: string): { sub: string; email: string; role: string; orgId?: string | null } {
-  return jwt.verify(token, JWT_ACCESS_SECRET) as any;
+function verifyAccessToken(token: string): { id: string; email: string; role: string; orgId?: string | null } {
+  const p = jwt.verify(token, JWT_ACCESS_SECRET) as any;
+  const id = p.id || p.sub;
+  return { id, email: p.email, role: p.role, orgId: p.orgId ?? null };
 }
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -107,9 +77,6 @@ const refreshCookieOptions = {
   maxAge: REFRESH_DAYS * 86_400_000,
 };
 
-// ═══════════════════════════════════════════════
-// AUTH MIDDLEWARE
-// ═══════════════════════════════════════════════
 declare global {
   namespace Express {
     interface Request {
@@ -121,9 +88,13 @@ declare global {
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
+
   if (token) {
     try {
       req.user = verifyAccessToken(token);
+      if (!req.user || !req.user.id) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
       return next();
     } catch {
       return res.status(401).json({ error: 'Session expired' });
@@ -138,12 +109,7 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
         if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
           return res.status(401).json({ error: 'Not authenticated' });
         }
-        req.user = {
-          id: stored.user.id,
-          email: stored.user.email,
-          role: stored.user.role,
-          orgId: stored.user.orgId,
-        };
+        req.user = { id: stored.user.id, email: stored.user.email, role: stored.user.role, orgId: stored.user.orgId };
         next();
       })
       .catch(() => res.status(401).json({ error: 'Not authenticated' }));
@@ -151,7 +117,7 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   }
 
   return res.status(401).json({ error: 'Not authenticated' });
-                                         }
+}
 
 function requireRole(...roles: string[]) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -161,38 +127,21 @@ function requireRole(...roles: string[]) {
   };
 }
 
-// ═══════════════════════════════════════════════
-// UTILS
-// ═══════════════════════════════════════════════
 const addDays = (date: Date, days: number): Date => new Date(date.getTime() + days * 86_400_000);
 const todayKey = (): string => new Date().toISOString().slice(0, 10);
 
-// ═══════════════════════════════════════════════
-// PLAN CATALOG
-// ═══════════════════════════════════════════════
 const B2C_PLANS = {
-  B2C_15D: { id: 'B2C_15D', name: 'B2C 15 days', durationDays: 15, priceCents: 1500, currency: 'usd',
-    features: ['Unlimited translation', '120 min voice', '120 min video', 'E2EE'] },
-  B2C_1M: { id: 'B2C_1M', name: 'B2C 1 month', durationDays: 30, priceCents: 2500, currency: 'usd',
-    features: ['Everything in 15d', '300 min voice', 'Priority support'] },
-  B2C_1Y: { id: 'B2C_1Y', name: 'B2C 1 year', durationDays: 365, priceCents: 19900, currency: 'usd',
-    features: ['Everything in 1m', '4200 min yearly', 'Save 33%'] },
+  B2C_15D: { id: 'B2C_15D', name: 'B2C 15 days', durationDays: 15, priceCents: 1500, currency: 'usd', features: ['Unlimited translation', '120 min voice', '120 min video', 'E2EE'] },
+  B2C_1M: { id: 'B2C_1M', name: 'B2C 1 month', durationDays: 30, priceCents: 2500, currency: 'usd', features: ['Everything in 15d', '300 min voice', 'Priority support'] },
+  B2C_1Y: { id: 'B2C_1Y', name: 'B2C 1 year', durationDays: 365, priceCents: 19900, currency: 'usd', features: ['Everything in 1m', '4200 min yearly', 'Save 33%'] },
 } as const;
 
 const B2B_PLANS = {
-  B2B_15D: { id: 'B2B_15D', name: 'B2B 15 days', durationDays: 15, priceCents: 2999, currency: 'usd', seats: 5,
-    features: ['5 users', 'Admin panel', 'Statistics', 'Billing'] },
-  B2B_1M: { id: 'B2B_1M', name: 'B2B 1 month', durationDays: 30, priceCents: 5999, currency: 'usd', seats: 10,
-    features: ['10 users', 'Employee management', 'CFDI invoices'] },
-  B2B_1Y: { id: 'B2B_1Y', name: 'B2B 1 year', durationDays: 365, priceCents: 59999, currency: 'usd', seats: 25,
-    features: ['25 users', 'Everything in 1m', 'Annual savings'] },
+  B2B_15D: { id: 'B2B_15D', name: 'B2B 15 days', durationDays: 15, priceCents: 2999, currency: 'usd', seats: 5, features: ['5 users', 'Admin panel', 'Statistics', 'Billing'] },
+  B2B_1M: { id: 'B2B_1M', name: 'B2B 1 month', durationDays: 30, priceCents: 5999, currency: 'usd', seats: 10, features: ['10 users', 'Employee management', 'CFDI invoices'] },
+  B2B_1Y: { id: 'B2B_1Y', name: 'B2B 1 year', durationDays: 365, priceCents: 59999, currency: 'usd', seats: 25, features: ['25 users', 'Everything in 1m', 'Annual savings'] },
 } as const;
 
-// ═══════════════════════════════════════════════
-// AUTH ENDPOINTS
-// ═══════════════════════════════════════════════
-
-// Registro - password opcional para demo
 const registerSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
@@ -205,15 +154,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const data = registerSchema.parse(req.body);
     const email = data.email.toLowerCase().trim();
-
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return res.status(409).json({ error: 'That email is already registered' });
-
-    // Si no hay password, genera un hash "nopass:" para permitir login sin password (modo demo)
     const passwordHash = data.password
       ? await bcrypt.hash(data.password, 12)
       : 'nopass:' + crypto.randomBytes(16).toString('hex');
-
     const user = await prisma.user.create({
       data: {
         email,
@@ -224,17 +169,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         avatar: data.avatar,
       },
     });
-
     const accessToken = signAccessToken(user);
     const refreshTokenRaw = signRefreshToken(user.id);
     await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: sha256(refreshTokenRaw),
-        expiresAt: addDays(new Date(), REFRESH_DAYS),
-      },
+      data: { userId: user.id, tokenHash: sha256(refreshTokenRaw), expiresAt: addDays(new Date(), REFRESH_DAYS) },
     });
-
     res.cookie('refresh_token', refreshTokenRaw, refreshCookieOptions);
     res.status(201).json({
       user: { id: user.id, name: user.name, email: user.email, role: user.role },
@@ -242,18 +181,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     });
   } catch (err: any) {
     if (err && err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Missing data: please provide your name and a valid email.' });
+      return res.status(400).json({ error: 'Missing data: name and valid email required.' });
     }
     res.status(400).json({ error: err.message || 'Error registering user' });
   }
 });
 
-// Login - acepta cuentas con y sin password
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password, userId } = req.body;
     let user: any;
-
     if (userId) {
       user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) return res.status(404).json({ error: 'User not found' });
@@ -269,20 +206,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     } else {
       return res.status(400).json({ error: 'Email or userId required' });
     }
-
     const accessToken = signAccessToken(user);
     const refreshTokenRaw = signRefreshToken(user.id);
     await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: sha256(refreshTokenRaw),
-        expiresAt: addDays(new Date(), REFRESH_DAYS),
-      },
+      data: { userId: user.id, tokenHash: sha256(refreshTokenRaw), expiresAt: addDays(new Date(), REFRESH_DAYS) },
     });
-
     res.cookie('refresh_token', refreshTokenRaw, refreshCookieOptions);
     broadcastSSE('user_status', { userId: user.id, isOnline: true });
-
     res.json({
       user: {
         id: user.id, name: user.name, email: user.email, role: user.role,
@@ -298,27 +228,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 app.post('/api/auth/refresh', async (req, res) => {
   const raw = req.cookies?.refresh_token;
   if (!raw) return res.status(401).json({ error: 'No session' });
-
-  const stored = await prisma.refreshToken.findUnique({
-    where: { tokenHash: sha256(raw) },
-    include: { user: true },
-  });
+  const stored = await prisma.refreshToken.findUnique({ where: { tokenHash: sha256(raw) }, include: { user: true } });
   if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
-    res.clearCookie('refresh_token', { path: '/api/auth' });
+    res.clearCookie('refresh_token', { path: '/' });
     return res.status(401).json({ error: 'Session expired' });
   }
-
   await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
   const accessToken = signAccessToken(stored.user);
   const newRefresh = signRefreshToken(stored.user.id);
   await prisma.refreshToken.create({
-    data: {
-      userId: stored.user.id,
-      tokenHash: sha256(newRefresh),
-      expiresAt: addDays(new Date(), REFRESH_DAYS),
-    },
+    data: { userId: stored.user.id, tokenHash: sha256(newRefresh), expiresAt: addDays(new Date(), REFRESH_DAYS) },
   });
-
   res.cookie('refresh_token', newRefresh, refreshCookieOptions);
   res.json({
     user: { id: stored.user.id, name: stored.user.name, email: stored.user.email, role: stored.user.role },
@@ -334,16 +254,13 @@ app.post('/api/auth/logout', async (req, res) => {
       data: { revokedAt: new Date() },
     });
   }
-  res.clearCookie('refresh_token', { path: '/api/auth' });
+  res.clearCookie('refresh_token', { path: '/' });
   res.json({ ok: true });
 });
 
 app.get('/api/auth/users', async (_req, res) => {
   const users = await prisma.user.findMany({
-    select: {
-      id: true, name: true, email: true, avatar: true, role: true,
-      preferredLanguage: true, orgId: true,
-    },
+    select: { id: true, name: true, email: true, avatar: true, role: true, preferredLanguage: true, orgId: true },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
@@ -367,34 +284,18 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
   });
 });
 
-// ═══════════════════════════════════════════════
-// FREEMIUM MODULE
-// ═══════════════════════════════════════════════
 const FREEMIUM_LIMIT = { messagesPerDay: 10, maxCharsPerMessage: 500 };
 
 app.get('/api/freemium/quota', requireAuth, async (req, res) => {
   const day = todayKey();
-  const usage = await prisma.freemiumUsage.findUnique({
-    where: { userId_day: { userId: req.user!.id, day } },
-  });
+  const usage = await prisma.freemiumUsage.findUnique({ where: { userId_day: { userId: req.user!.id, day } } });
   const used = usage?.translationsUsed || 0;
-  res.json({
-    used,
-    limit: FREEMIUM_LIMIT.messagesPerDay,
-    remaining: Math.max(0, FREEMIUM_LIMIT.messagesPerDay - used),
-    day,
-  });
+  res.json({ used, limit: FREEMIUM_LIMIT.messagesPerDay, remaining: Math.max(0, FREEMIUM_LIMIT.messagesPerDay - used), day });
 });
 
-// ═══════════════════════════════════════════════
-// B2C MODULE
-// ═══════════════════════════════════════════════
 app.get('/api/b2c/plans', async (_req, res) => {
   const configs = await prisma.planConfig.findMany();
-  const plans = Object.values(B2C_PLANS).map((p) => ({
-    ...p,
-    active: configs.find((c) => c.planId === p.id)?.active ?? true,
-  }));
+  const plans = Object.values(B2C_PLANS).map((p) => ({ ...p, active: configs.find((c) => c.planId === p.id)?.active ?? true }));
   res.json({ plans });
 });
 
@@ -406,15 +307,9 @@ app.get('/api/b2c/subscription', requireAuth, async (req, res) => {
   res.json({ subscription: sub });
 });
 
-// ═══════════════════════════════════════════════
-// B2B MODULE
-// ═══════════════════════════════════════════════
 app.get('/api/b2b/plans', async (_req, res) => {
   const configs = await prisma.planConfig.findMany();
-  const plans = Object.values(B2B_PLANS).map((p) => ({
-    ...p,
-    active: configs.find((c) => c.planId === p.id)?.active ?? true,
-  }));
+  const plans = Object.values(B2B_PLANS).map((p) => ({ ...p, active: configs.find((c) => c.planId === p.id)?.active ?? true }));
   res.json({ plans });
 });
 
@@ -426,12 +321,7 @@ app.get('/api/b2b/dashboard', requireAuth, async (req, res) => {
     prisma.user.count({ where: { orgId: req.user!.orgId } }),
     prisma.message.count({ where: { orgId: req.user!.orgId } }),
   ]);
-  res.json({
-    companyName: org?.companyName || '',
-    subscription: sub,
-    members,
-    messageCount,
-  });
+  res.json({ companyName: org?.companyName || '', subscription: sub, members, messageCount });
 });
 
 app.get('/api/b2b/employees', requireAuth, async (req, res) => {
@@ -457,10 +347,7 @@ app.post('/api/b2b/employees', requireAuth, requireRole('ORG_OWNER', 'ADMIN'), a
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return res.status(409).json({ error: 'Email already registered' });
     const employee = await prisma.user.create({
-      data: {
-        name: data.name, email, role: Role.ORG_MEMBER, orgId: req.user!.orgId,
-        passwordHash: await bcrypt.hash(data.password, 12),
-      },
+      data: { name: data.name, email, role: Role.ORG_MEMBER, orgId: req.user!.orgId, passwordHash: await bcrypt.hash(data.password, 12) },
       select: { id: true, name: true, email: true, role: true, createdAt: true },
     });
     res.status(201).json({ employee });
@@ -486,9 +373,6 @@ app.get('/api/b2b/stats', requireAuth, async (req, res) => {
   res.json({ messages, users, translations: messages });
 });
 
-// ═══════════════════════════════════════════════
-// PAYMENTS MODULE
-// ═══════════════════════════════════════════════
 function getStripe(): Stripe | null {
   if (!process.env.STRIPE_SECRET_KEY) return null;
   return new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -499,7 +383,6 @@ function getMercadoPago(): MercadoPagoConfig | null {
   return new MercadoPagoConfig({ accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN });
 }
 
-// B2C Checkout
 app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
   try {
     const schema = z.object({
@@ -508,37 +391,30 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
     });
     const { planId, gateway } = schema.parse(req.body);
     const plan = B2C_PLANS[planId];
-
     if (gateway === 'stripe') {
       const stripe = getStripe();
       if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
       const priceId = process.env[`STRIPE_PRICE_${planId}`];
-      if (!priceId) return res.status(500).json({ error: `Missing STRIPE_PRICE_${planId} in .env` });
+      if (!priceId) return res.status(500).json({ error: `Missing STRIPE_PRICE_${planId} in env` });
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer_email: req.user!.email,
         client_reference_id: req.user!.id,
         metadata: { planId, segment: 'B2C' },
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=stripe`,
-        cancel_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/cancelado`,
+        success_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/exitoso?provider=stripe`,
+        cancel_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/cancelado`,
       });
       return res.json({ url: session.url, orderId: session.id });
     }
-
     if (gateway === 'paypal') {
       const orderId = `PAYPAL_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      return res.json({
-        url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/paypal?orderId=${orderId}&planId=${planId}`,
-        orderId,
-      });
+      return res.json({ url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/paypal?orderId=${orderId}&planId=${planId}`, orderId });
     }
-
     if (gateway === 'mercadopago') {
       const mp = getMercadoPago();
       if (!mp) return res.status(503).json({ error: 'Mercado Pago not configured' });
-      const preApproval = new PreApproval(mp);
-      const result = await preApproval.create({
+      const result = await new PreApproval(mp).create({
         body: {
           reason: `JCV FANYI - ${plan.name}`,
           external_reference: JSON.stringify({ planId, segment: 'B2C', userId: req.user!.id }),
@@ -549,7 +425,7 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
             transaction_amount: plan.priceCents / 100,
             currency_id: 'USD',
           },
-          back_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=mercadopago`,
+          back_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/exitoso?provider=mercadopago`,
         },
       });
       return res.json({ url: result.init_point, orderId: String(result.id) });
@@ -559,7 +435,6 @@ app.post('/api/b2c/checkout', requireAuth, async (req, res) => {
   }
 });
 
-// B2B Checkout
 app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
   try {
     const schema = z.object({
@@ -569,17 +444,12 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
     });
     const { companyName, planId, gateway } = schema.parse(req.body);
     const plan = B2B_PLANS[planId];
-
     let orgId = req.user!.orgId;
     if (!orgId) {
       const org = await prisma.organization.create({ data: { companyName } });
-      await prisma.user.update({
-        where: { id: req.user!.id },
-        data: { orgId: org.id, role: Role.ORG_OWNER },
-      });
+      await prisma.user.update({ where: { id: req.user!.id }, data: { orgId: org.id, role: Role.ORG_OWNER } });
       orgId = org.id;
     }
-
     if (gateway === 'stripe') {
       const stripe = getStripe();
       if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
@@ -591,17 +461,15 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
         client_reference_id: req.user!.id,
         metadata: { planId, segment: 'B2B', orgId },
         line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=stripe`,
-        cancel_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/cancelado`,
+        success_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/exitoso?provider=stripe`,
+        cancel_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/cancelado`,
       });
       return res.json({ url: session.url, orderId: session.id });
     }
-
     if (gateway === 'mercadopago') {
       const mp = getMercadoPago();
       if (!mp) return res.status(503).json({ error: 'MP not configured' });
-      const pa = new PreApproval(mp);
-      const result = await pa.create({
+      const result = await new PreApproval(mp).create({
         body: {
           reason: `JCV FANYI B2B - ${plan.name} - ${companyName}`,
           external_reference: JSON.stringify({ planId, segment: 'B2B', userId: req.user!.id, orgId }),
@@ -612,133 +480,85 @@ app.post('/api/b2b/checkout', requireAuth, async (req, res) => {
             transaction_amount: plan.priceCents / 100,
             currency_id: 'USD',
           },
-          back_url: `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/pago/exitoso?provider=mercadopago`,
+          back_url: `${process.env.CLIENT_ORIGIN || 'https://jcv-chat-fanyi.onrender.com'}/pago/exitoso?provider=mercadopago`,
         },
       });
       return res.json({ url: result.init_point, orderId: String(result.id) });
     }
-
     res.status(400).json({ error: 'Gateway not supported for B2B' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// ═══════════════════════════════════════════════
-// WEBHOOKS
-// ═══════════════════════════════════════════════
 app.post('/api/payments/webhook/stripe', async (req, res) => {
   const stripe = getStripe();
-  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
-    return res.status(503).json({ error: 'Not configured' });
-  }
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).json({ error: 'Not configured' });
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      req.headers['stripe-signature'] as string,
-      process.env.STRIPE_WEBHOOK_SECRET,
-    );
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'] as string, process.env.STRIPE_WEBHOOK_SECRET);
   } catch {
     return res.status(400).json({ error: 'Invalid signature' });
   }
-  const seen = await prisma.webhookEvent.findUnique({
-    where: { provider_eventId: { provider: 'STRIPE', eventId: event.id } },
-  });
+  const seen = await prisma.webhookEvent.findUnique({ where: { provider_eventId: { provider: 'STRIPE', eventId: event.id } } });
   if (seen) return res.json({ received: true, duplicate: true });
-
   try {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
       const { planId, segment, orgId } = session.metadata || {};
       const userId = session.client_reference_id;
-      const subId = typeof session.subscription === 'string'
-        ? session.subscription : (session.subscription as Stripe.Subscription)?.id;
+      const subId = typeof session.subscription === 'string' ? session.subscription : (session.subscription as Stripe.Subscription)?.id;
       if (!planId || !userId || !subId) throw new Error('Incomplete metadata');
-
       if (segment === 'B2C') {
         const plan = B2C_PLANS[planId as keyof typeof B2C_PLANS];
         await prisma.subscriptionB2C.upsert({
           where: { userId },
-          update: {
-            plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId,
-            status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays), autoRenew: true,
-          },
-          create: {
-            userId, plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId,
-            status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays),
-          },
+          update: { plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId, status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays), autoRenew: true },
+          create: { userId, plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId, status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays) },
         });
       } else if (segment === 'B2B' && orgId) {
         const plan = B2B_PLANS[planId as keyof typeof B2B_PLANS];
         await prisma.subscriptionB2B.upsert({
           where: { orgId },
-          update: {
-            plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId,
-            status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays),
-          },
-          create: {
-            orgId, plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId,
-            status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays),
-          },
+          update: { plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId, status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays) },
+          create: { orgId, plan: planId as any, provider: PaymentProvider.STRIPE, externalId: subId, status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays) },
         });
       }
-
       if (session.amount_total) {
         await prisma.invoice.create({
           data: {
             amount: session.amount_total, currency: session.currency || 'usd',
             provider: PaymentProvider.STRIPE, providerRef: session.id, status: 'PAID',
-            ...(segment === 'B2C'
-              ? { b2c: { connect: { userId } } }
-              : { b2b: { connect: { orgId: orgId! } } }),
+            ...(segment === 'B2C' ? { b2c: { connect: { userId } } } : { b2b: { connect: { orgId: orgId! } } }),
           },
         });
       }
       broadcastSSE('subscription_activated', { userId, planId, segment });
     }
-
     if (event.type === 'invoice.paid') {
       const invoice = event.data.object as Stripe.Invoice;
-      const subId = typeof invoice.subscription === 'string'
-        ? invoice.subscription : (invoice.subscription as Stripe.Subscription)?.id;
+      const subId = typeof invoice.subscription === 'string' ? invoice.subscription : (invoice.subscription as Stripe.Subscription)?.id;
       if (subId) {
         const b2c = await prisma.subscriptionB2C.findFirst({ where: { externalId: subId } });
         if (b2c) {
           const plan = B2C_PLANS[b2c.plan as keyof typeof B2C_PLANS];
           const base = b2c.expiresAt > new Date() ? b2c.expiresAt : new Date();
-          await prisma.subscriptionB2C.update({
-            where: { id: b2c.id },
-            data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE },
-          });
+          await prisma.subscriptionB2C.update({ where: { id: b2c.id }, data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE } });
         }
         const b2b = await prisma.subscriptionB2B.findFirst({ where: { externalId: subId } });
         if (b2b) {
           const plan = B2B_PLANS[b2b.plan as keyof typeof B2B_PLANS];
           const base = b2b.expiresAt > new Date() ? b2b.expiresAt : new Date();
-          await prisma.subscriptionB2B.update({
-            where: { id: b2b.id },
-            data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE },
-          });
+          await prisma.subscriptionB2B.update({ where: { id: b2b.id }, data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE } });
         }
       }
     }
-
     if (event.type === 'customer.subscription.deleted') {
       const sub = event.data.object as Stripe.Subscription;
-      await prisma.subscriptionB2C.updateMany({
-        where: { externalId: sub.id },
-        data: { status: SubscriptionStatus.CANCELED, autoRenew: false },
-      });
-      await prisma.subscriptionB2B.updateMany({
-        where: { externalId: sub.id },
-        data: { status: SubscriptionStatus.CANCELED, autoRenew: false },
-      });
+      await prisma.subscriptionB2C.updateMany({ where: { externalId: sub.id }, data: { status: SubscriptionStatus.CANCELED, autoRenew: false } });
+      await prisma.subscriptionB2B.updateMany({ where: { externalId: sub.id }, data: { status: SubscriptionStatus.CANCELED, autoRenew: false } });
     }
-
-    await prisma.webhookEvent.create({
-      data: { provider: 'STRIPE', eventId: event.id, type: event.type, payload: event as any, processedAt: new Date() },
-    });
+    await prisma.webhookEvent.create({ data: { provider: 'STRIPE', eventId: event.id, type: event.type, payload: event as any, processedAt: new Date() } });
     res.json({ received: true });
   } catch (err) {
     console.error('[stripe-webhook]', err);
@@ -750,7 +570,6 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
   const type = (req.query.type as string) || (req.body?.type as string);
   const dataId = (req.query['data.id'] as string) || (req.body?.data?.id as string);
   if (type !== 'preapproval' || !dataId) return res.json({ received: true });
-
   if (process.env.MP_WEBHOOK_SECRET) {
     const header = req.headers['x-signature'] as string;
     const requestId = (req.headers['x-request-id'] as string) || '';
@@ -766,10 +585,8 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
       }
     }
   }
-
   const mp = getMercadoPago();
   if (!mp) return res.status(503).json({ error: 'MP not configured' });
-
   let preapproval: any;
   try {
     preapproval = await new PreApproval(mp).get({ id: dataId });
@@ -777,65 +594,41 @@ app.post('/api/payments/webhook/mercadopago', async (req, res) => {
     return res.status(502).json({ error: 'Could not verify' });
   }
   if (preapproval.status !== 'authorized') return res.json({ received: true, status: preapproval.status });
-
   let meta: any;
   try { meta = JSON.parse(preapproval.external_reference || '{}'); } catch {
     return res.status(400).json({ error: 'Invalid external_reference' });
   }
   if (!meta.planId || !meta.userId || !meta.segment) return res.status(400).json({ error: 'Incomplete metadata' });
-
   const existing = await prisma.subscriptionB2C.findFirst({ where: { externalId: dataId } })
     || await prisma.subscriptionB2B.findFirst({ where: { externalId: dataId } });
-
   if (existing) {
     if ('userId' in existing) {
       const plan = B2C_PLANS[existing.plan as keyof typeof B2C_PLANS];
       const base = existing.expiresAt > new Date() ? existing.expiresAt : new Date();
-      await prisma.subscriptionB2C.update({
-        where: { id: existing.id },
-        data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE },
-      });
+      await prisma.subscriptionB2C.update({ where: { id: existing.id }, data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE } });
     } else {
       const plan = B2B_PLANS[existing.plan as keyof typeof B2B_PLANS];
       const base = existing.expiresAt > new Date() ? existing.expiresAt : new Date();
-      await prisma.subscriptionB2B.update({
-        where: { id: existing.id },
-        data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE },
-      });
+      await prisma.subscriptionB2B.update({ where: { id: existing.id }, data: { expiresAt: addDays(base, plan.durationDays), status: SubscriptionStatus.ACTIVE } });
     }
   } else {
     if (meta.segment === 'B2C') {
       const plan = B2C_PLANS[meta.planId as keyof typeof B2C_PLANS];
       await prisma.subscriptionB2C.upsert({
         where: { userId: meta.userId },
-        update: {
-          plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId,
-          status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays),
-        },
-        create: {
-          userId: meta.userId, plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId,
-          status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays),
-        },
+        update: { plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId, status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays) },
+        create: { userId: meta.userId, plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId, status: SubscriptionStatus.ACTIVE, expiresAt: addDays(new Date(), plan.durationDays) },
       });
     } else if (meta.segment === 'B2B' && meta.orgId) {
       const plan = B2B_PLANS[meta.planId as keyof typeof B2B_PLANS];
       await prisma.subscriptionB2B.upsert({
         where: { orgId: meta.orgId },
-        update: {
-          plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId,
-          status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays),
-        },
-        create: {
-          orgId: meta.orgId, plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId,
-          status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays),
-        },
+        update: { plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId, status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays) },
+        create: { orgId: meta.orgId, plan: meta.planId, provider: PaymentProvider.MERCADOPAGO, externalId: dataId, status: SubscriptionStatus.ACTIVE, seats: plan.seats, expiresAt: addDays(new Date(), plan.durationDays) },
       });
     }
   }
-
-  await prisma.webhookEvent.create({
-    data: { provider: 'MERCADOPAGO', eventId: `mp_${dataId}_${Date.now()}`, type: 'preapproval', payload: { status: preapproval.status } as any, processedAt: new Date() },
-  }).catch(() => {});
+  await prisma.webhookEvent.create({ data: { provider: 'MERCADOPAGO', eventId: `mp_${dataId}_${Date.now()}`, type: 'preapproval', payload: { status: preapproval.status } as any, processedAt: new Date() } }).catch(() => {});
   res.json({ received: true });
 });
 
@@ -855,9 +648,6 @@ app.get('/api/payments/providers', (_req, res) => {
   });
 });
 
-// ═══════════════════════════════════════════════
-// ADMIN MODULE
-// ═══════════════════════════════════════════════
 app.get('/api/admin/stats', requireAuth, requireRole('ADMIN'), async (_req, res) => {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -881,9 +671,6 @@ app.patch('/api/admin/plans/:planId', requireAuth, requireRole('ADMIN'), async (
   res.json(config);
 });
 
-// ═══════════════════════════════════════════════
-// AI & TRANSLATION MODULE
-// ═══════════════════════════════════════════════
 app.get('/api/siliconflow/status', (_req, res) => {
   res.json({
     hasApiKey: Boolean(process.env.SILICONFLOW_API_KEY),
@@ -962,16 +749,9 @@ app.post('/api/siliconflow/translate', async (req, res) => {
 app.post('/api/siliconflow/audio', async (req, res) => {
   const { audioBase64, targetLang = 'es' } = req.body;
   if (!audioBase64) return res.status(400).json({ error: 'audioBase64 required' });
-  res.json({
-    transcription: 'Audio processed',
-    translatedText: 'Voice note received',
-    modelUsed: 'Qwen2-Audio',
-  });
+  res.json({ transcription: 'Audio processed', translatedText: 'Voice note received', modelUsed: 'Qwen2-Audio' });
 });
 
-// ═══════════════════════════════════════════════
-// CHAT MODULE (SSE + Messages + Channels)
-// ═══════════════════════════════════════════════
 app.get('/api/chat/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -992,9 +772,7 @@ app.post('/api/chat/channels', requireAuth, async (req, res) => {
   const { name, description, isE2EE = false } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const cleanName = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '');
-  const channel = await prisma.channel.create({
-    data: { name: cleanName, description: description || '', isE2EE },
-  });
+  const channel = await prisma.channel.create({ data: { name: cleanName, description: description || '', isE2EE } });
   broadcastSSE('channel_created', channel);
   res.json({ channel });
 });
@@ -1033,11 +811,13 @@ app.get('/api/chat/messages', async (req, res) => {
 
 app.post('/api/chat/messages', requireAuth, async (req, res) => {
   try {
+    const userId = req.user!.id;
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
     const { channelId, text, isE2EE, encryptedPayload, isAudio, audioBase64, audioDuration, skipTranslation } = req.body;
-    if (!channelId || !req.user) return res.status(400).json({ error: 'Missing params' });
+    if (!channelId) return res.status(400).json({ error: 'Missing params' });
 
-    const b2c = await prisma.subscriptionB2C.findUnique({ where: { userId: req.user.id } });
-    const b2b = req.user.orgId ? await prisma.subscriptionB2B.findUnique({ where: { orgId: req.user.orgId } }) : null;
+    const b2c = await prisma.subscriptionB2C.findUnique({ where: { userId } });
+    const b2b = req.user!.orgId ? await prisma.subscriptionB2B.findUnique({ where: { orgId: req.user!.orgId } }) : null;
     let module: MessageModule = MessageModule.FREEMIUM;
     if (b2c && b2c.status === 'ACTIVE' && b2c.expiresAt > new Date()) module = MessageModule.B2C;
     else if (b2b && b2b.status === 'ACTIVE' && b2b.expiresAt > new Date()) module = MessageModule.B2B;
@@ -1045,9 +825,9 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
     if (module === MessageModule.FREEMIUM && !isE2EE && text) {
       const day = todayKey();
       const usage = await prisma.freemiumUsage.upsert({
-        where: { userId_day: { userId: req.user.id, day } },
+        where: { userId_day: { userId, day } },
         update: {},
-        create: { userId: req.user.id, day },
+        create: { userId, day },
       });
       if (usage.translationsUsed >= FREEMIUM_LIMIT.messagesPerDay) {
         return res.status(429).json({ error: 'Daily limit reached. Upgrade your plan.' });
@@ -1056,15 +836,15 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
         return res.status(413).json({ error: `Max ${FREEMIUM_LIMIT.maxCharsPerMessage} chars in free plan` });
       }
       await prisma.freemiumUsage.update({
-        where: { userId_day: { userId: req.user.id, day } },
+        where: { userId_day: { userId, day } },
         data: { translationsUsed: usage.translationsUsed + 1 },
       });
     }
 
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     const newMsg = await prisma.message.create({
       data: {
-        channelId, senderId: req.user.id, orgId: req.user.orgId, module,
+        channelId, senderId: userId, orgId: req.user!.orgId, module,
         text: text || '', originalText: text || '',
         sourceLanguage: user?.preferredLanguage || 'es',
         isE2EE: Boolean(isE2EE), encryptedPayload: encryptedPayload || undefined,
@@ -1083,15 +863,12 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
           translations[tLang] = trans.translatedText;
         } catch {}
       }));
-      await prisma.message.update({
-        where: { id: newMsg.id },
-        data: { translations },
-      });
+      await prisma.message.update({ where: { id: newMsg.id }, data: { translations } });
       broadcastSSE('message_translated', { messageId: newMsg.id, translations });
     }
 
     const fullMsg = {
-      id: newMsg.id, channelId: newMsg.channelId, senderId: newMsg.senderId,
+      id: newMsg.id, channelId: newMsg.channelId, senderId: userId,
       senderName: user?.name || '', senderAvatar: user?.avatar || '',
       senderLanguage: user?.preferredLanguage || 'es',
       timestamp: newMsg.createdAt.getTime(), text: newMsg.text, originalText: newMsg.originalText || '',
@@ -1099,7 +876,6 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
       audioDuration: newMsg.audioDuration, audioBase64: newMsg.audioBase64,
       aiModel: newMsg.aiModel, translationAccuracy: newMsg.translationAccuracy, reactions: {},
     };
-
     broadcastSSE('new_message', fullMsg);
     res.json({ message: fullMsg });
   } catch (err: any) {
@@ -1133,9 +909,6 @@ app.post('/api/webrtc/signal', (req, res) => {
   res.json({ success: true });
 });
 
-// ═══════════════════════════════════════════════
-// VAULT MODULE
-// ═══════════════════════════════════════════════
 app.get('/api/vault/plans', (_req, res) => {
   res.json({
     plans: {
@@ -1148,6 +921,19 @@ app.get('/api/vault/plans', (_req, res) => {
   });
 });
 
+app.post('/api/vault/checkout', async (req, res) => {
+  const { planId, gateway = 'mercadopago', clientEmail, rfc } = req.body;
+  const orderId = `VAULT_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  res.json({
+    orderId,
+    gateway,
+    planId,
+    cfdiDetails: { rfc: rfc || 'XAXX010101000', regimen: '601 - General de Ley Personas Morales', usoCFDI: 'G03 - Gastos en general', ivaStatus: '16% Included', status: 'Prefactura lista' },
+    checkoutUrl: `https://www.mercadopago.com.mx/checkout/v1/redirect?pref_id=PREF_${orderId}`,
+    createdAt: new Date().toISOString(),
+  });
+});
+
 app.post('/api/vault/translate', async (req, res) => {
   const { documentName, content, sourceLang = 'en', targetLang = 'es' } = req.body;
   if (!content) return res.status(400).json({ error: 'Content required' });
@@ -1157,10 +943,7 @@ app.post('/api/vault/translate', async (req, res) => {
     `Translate legal contract from ${sourceLang} to ${targetLang}. Keep legal terminology, numbering, and formatting. Output ONLY translated text.`,
   );
   if (!translated) translated = `[LEGAL TRANSLATION]\n\n${content}`;
-  res.json({
-    success: true, documentName, translatedContract: translated,
-    e2eeProtected: true, algorithm: 'AES-GCM-256', timestamp: Date.now(),
-  });
+  res.json({ success: true, documentName, translatedContract: translated, e2eeProtected: true, algorithm: 'AES-GCM-256', timestamp: Date.now() });
 });
 
 app.get('/api/vault/certificates', async (_req, res) => {
@@ -1187,56 +970,21 @@ app.post('/api/vault/certificates', async (req, res) => {
   res.json({ success: true, certificate: cert });
 });
 
-// ═══════════════════════════════════════════════
-// BOOTSTRAP DEMO DATA
-// ═══════════════════════════════════════════════
 async function bootstrapDemoData() {
   try {
     const userCount = await prisma.user.count();
     if (userCount === 0) {
       await prisma.user.createMany({
         data: [
-          {
-            email: 'josecvaladez1979@gmail.com',
-            name: 'Jose Carlos (JCV)',
-            passwordHash: 'nopass:demo-jc',
-            preferredLanguage: 'es',
-            role: Role.ADMIN,
-            avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-          },
-          {
-            email: 'yuki.tanaka@tokyo-lab.jp',
-            name: 'Yuki Tanaka',
-            passwordHash: 'nopass:demo-yuki',
-            preferredLanguage: 'ja',
-            avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-          },
-          {
-            email: 'sarah.j@siliconvalley.io',
-            name: 'Sarah Jenkins',
-            passwordHash: 'nopass:demo-sarah',
-            preferredLanguage: 'en',
-            avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
-          },
-          {
-            email: 'li.wei@beijing-tech.cn',
-            name: 'Li Wei',
-            passwordHash: 'nopass:demo-liwei',
-            preferredLanguage: 'zh',
-            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-          },
-          {
-            email: 'jean.dupont@paris.fr',
-            name: 'Jean Dupont',
-            passwordHash: 'nopass:demo-jean',
-            preferredLanguage: 'fr',
-            avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-          },
+          { email: 'josecvaladez1979@gmail.com', name: 'Jose Carlos (JCV)', passwordHash: 'nopass:demo-jc', preferredLanguage: 'es', role: Role.ADMIN, avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80' },
+          { email: 'yuki.tanaka@tokyo-lab.jp', name: 'Yuki Tanaka', passwordHash: 'nopass:demo-yuki', preferredLanguage: 'ja', avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80' },
+          { email: 'sarah.j@siliconvalley.io', name: 'Sarah Jenkins', passwordHash: 'nopass:demo-sarah', preferredLanguage: 'en', avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80' },
+          { email: 'li.wei@beijing-tech.cn', name: 'Li Wei', passwordHash: 'nopass:demo-liwei', preferredLanguage: 'zh', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80' },
+          { email: 'jean.dupont@paris.fr', name: 'Jean Dupont', passwordHash: 'nopass:demo-jean', preferredLanguage: 'fr', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80' },
         ],
       });
       console.log('5 demo users created in database');
     }
-
     const channelCount = await prisma.channel.count();
     if (channelCount === 0) {
       await prisma.channel.createMany({
@@ -1253,12 +1001,8 @@ async function bootstrapDemoData() {
   }
 }
 
-// ═══════════════════════════════════════════════
-// START SERVER
-// ═══════════════════════════════════════════════
 async function startServer() {
   await bootstrapDemoData();
-
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {
@@ -1266,16 +1010,12 @@ async function startServer() {
     });
   } else {
     try {
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      });
+      const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
       app.use(vite.middlewares);
     } catch (err) {
       console.error('Vite init error, falling back to static:', err);
     }
   }
-
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`JCV CHAT FANYI Server running at http://0.0.0.0:${PORT}`);
     console.log(`Database: PostgreSQL connected`);
