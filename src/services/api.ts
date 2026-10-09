@@ -143,7 +143,6 @@ export const api = {
     const planId = isB2B ? 'B2B_1Y' : (cycle === 'mensual' || cycle === '1m' ? 'B2C_1M' : 'B2C_15D');
     const body = isB2B
       ? { companyName: 'Mi Empresa', planId, gateway }
-      ? { companyName: 'Mi Empresa', planId, gateway }
       : { planId, gateway };
     const path = isB2B ? '/api/b2b/checkout' : '/api/b2c/checkout';
     const res = await request(path, {
