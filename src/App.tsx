@@ -396,8 +396,11 @@ export default function App() {
         isAudio: params.isAudio,
         audioBase64: params.audioBase64,
         audioDuration: params.audioDuration,
-        skipTranslation: params.skipTranslation,
+                skipTranslation: params.skipTranslation,
       });
+      if (sent && sent.id) {
+        setMessages((prev) => (prev.some((m) => m.id === sent.id) ? prev : [...prev, sent]));
+      }
     } catch (err: any) {
       console.error('Failed to send message:', err);
       alert('Error al enviar mensaje: ' + err.message);
