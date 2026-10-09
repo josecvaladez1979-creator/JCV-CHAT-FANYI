@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
@@ -46,6 +47,7 @@ app.use(cors({
 // Stripe webhook necesita body crudo (antes de express.json)
 app.use('/api/payments/webhook/stripe', express.raw({ type: 'application/json' }));
 
+app.use(cookieParser());
 app.use(express.json({ limit: '30mb' }));
 
 const authLimiter = rateLimit({
