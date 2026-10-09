@@ -101,7 +101,7 @@ const refreshCookieOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax' as const,
-  path: '/api/auth',
+  path: '/',
   maxAge: REFRESH_DAYS * 86_400_000,
 };
 
@@ -119,14 +119,37 @@ declare global {
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Not authenticated' });
-  try {
-    req.user = verifyAccessToken(token);
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Session expired' });
+  if (token) {
+    try {
+      req.user = verifyAccessToken(token);
+      return next();
+    } catch {
+      return res.status(401).json({ error: 'Session expired' });
+    }
   }
-}
+
+  const raw = req.cookies?.refresh_token;
+  if (raw) {
+    prisma.refreshToken
+      .findUnique({ where: { tokenHash: sha256(raw) }, include: { user: true } })
+      .then((stored) => {
+        if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+        req.user = {
+          id: stored.user.id,
+          email: stored.user.email,
+          role: stored.user.role,
+          orgId: stored.user.orgId,
+        };
+        next();
+      })
+      .catch(() => res.status(401).json({ error: 'Not authenticated' }));
+    return;
+  }
+
+  return res.status(401).json({ error: 'Not authenticated' });
+                                         }
 
 function requireRole(...roles: string[]) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
