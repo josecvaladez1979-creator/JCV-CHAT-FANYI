@@ -682,7 +682,6 @@ app.get('/api/siliconflow/status', (_req, res) => {
     defaultModel: 'Qwen/Qwen3-32B-Instruct',
     audioModel: 'Qwen/Qwen2-Audio-7B-Instruct',
     provider: 'SiliconFlow',
-    accuracy: '99%',
   });
 });
 
@@ -740,8 +739,15 @@ async function translateWithSiliconFlow(text: string, targetLang: string, source
     } catch {}
   }
   const geminiResult = await translateWithGemini(text, targetLang);
-  if (geminiResult) return { translatedText: geminiResult, modelUsed: 'Gemini', accuracy: '99%' };
-  return { translatedText: text, modelUsed: 'fallback', accuracy: '0%' };
+  if (geminiResult) {
+  return {
+    translatedText: geminiResult,
+    modelUsed: 'Gemini',
+  };
+}
+
+throw new Error('Los servicios de traducción IA no están disponibles.');
+  
 }
 
 app.post('/api/siliconflow/translate', async (req, res) => {
@@ -835,7 +841,8 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
         sourceLanguage: user?.preferredLanguage || 'es',
         isE2EE: Boolean(isE2EE), encryptedPayload: encryptedPayload || undefined,
         isAudio: Boolean(isAudio), audioBase64, audioDuration,
-        aiModel: 'Qwen/Qwen3-32B-Instruct', translationAccuracy: '99%',
+        aiModel: 'Qwen/Qwen3-32B-Instruct',
+translationAccuracy: '',
         reactions: {},
       },
     });
