@@ -753,9 +753,21 @@ throw new Error('Los servicios de traducción IA no están disponibles.');
 app.post('/api/siliconflow/translate', async (req, res) => {
   const { text, targetLang, sourceLang, model } = req.body;
   if (!text || !targetLang) return res.status(400).json({ error: 'Text and targetLang required' });
-  const result = await translateWithSiliconFlow(text, targetLang, sourceLang, model);
-  res.json(result);
-});
+  
+  try {
+    const result = await translateWithSiliconFlow(
+      text,
+      targetLang,
+      sourceLang,
+      model
+    );
+    return res.json(result);
+  } catch (error) {
+    console.error('Translation error:', error);
+    return res.status(503).json({
+      error: 'El servicio de traducción IA no está disponible temporalmente.',
+    });
+  }
 
 app.post('/api/siliconflow/audio', async (req, res) => {
   const { audioBase64, targetLang = 'es' } = req.body;
