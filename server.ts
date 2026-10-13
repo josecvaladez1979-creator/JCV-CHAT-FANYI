@@ -130,17 +130,22 @@ function requireRole(...roles: string[]) {
 const addDays = (date: Date, days: number): Date => new Date(date.getTime() + days * 86_400_000);
 const todayKey = (): string => new Date().toISOString().slice(0, 10);
 
-const B2C_PLANS = {
-  B2C_15D: { id: 'B2C_15D', name: 'B2C 15 days', durationDays: 15, priceCents: 1500, currency: 'usd', features: ['Unlimited translation', '120 min voice', '120 min video', 'E2EE'] },
-  B2C_1M: { id: 'B2C_1M', name: 'B2C 1 month', durationDays: 30, priceCents: 2500, currency: 'usd', features: ['Everything in 15d', '300 min voice', 'Priority support'] },
-  B2C_1Y: { id: 'B2C_1Y', name: 'B2C 1 year', durationDays: 365, priceCents: 19900, currency: 'usd', features: ['Everything in 1m', '4200 min yearly', 'Save 33%'] },
-} as const;
 
-const B2B_PLANS = {
-  B2B_15D: { id: 'B2B_15D', name: 'B2B 15 days', durationDays: 15, priceCents: 2999, currency: 'usd', seats: 5, features: ['5 users', 'Admin panel', 'Statistics', 'Billing'] },
-  B2B_1M: { id: 'B2B_1M', name: 'B2B 1 month', durationDays: 30, priceCents: 5999, currency: 'usd', seats: 10, features: ['10 users', 'Employee management', 'CFDI invoices'] },
-  B2B_1Y: { id: 'B2B_1Y', name: 'B2B 1 year', durationDays: 365, priceCents: 59999, currency: 'usd', seats: 25, features: ['25 users', 'Everything in 1m', 'Annual savings'] },
-} as const;
+const b2b = req.user!.orgId
+  ? await prisma.subscriptionB2B.findUnique({
+      where: { orgId: req.user!.orgId },
+    })
+  : null;
+
+let module: MessageModule = MessageModule.FREEMIUM;
+
+if (
+  b2b &&
+  b2b.status === 'ACTIVE' &&
+  b2b.expiresAt > new Date()
+) {
+  module = MessageModule.B2B;
+}
 
 const registerSchema = z.object({
   name: z.string().min(2).max(80),
@@ -821,25 +826,6 @@ app.post('/api/chat/messages', requireAuth, async (req, res) => {
     let module: MessageModule = MessageModule.FREEMIUM;
     if (b2c && b2c.status === 'ACTIVE' && b2c.expiresAt > new Date()) module = MessageModule.B2C;
     else if (b2b && b2b.status === 'ACTIVE' && b2b.expiresAt > new Date()) module = MessageModule.B2B;
-
-    if (module === MessageModule.FREEMIUM && !isE2EE && text) {
-      const day = todayKey();
-      const usage = await prisma.freemiumUsage.upsert({
-        where: { userId_day: { userId, day } },
-        update: {},
-        create: { userId, day },
-      });
-      if (usage.translationsUsed >= FREEMIUM_LIMIT.messagesPerDay) {
-        return res.status(429).json({ error: 'Daily limit reached. Upgrade your plan.' });
-      }
-      if (text.length > FREEMIUM_LIMIT.maxCharsPerMessage) {
-        return res.status(413).json({ error: `Max ${FREEMIUM_LIMIT.maxCharsPerMessage} chars in free plan` });
-      }
-      await prisma.freemiumUsage.update({
-        where: { userId_day: { userId, day } },
-        data: { translationsUsed: usage.translationsUsed + 1 },
-      });
-    }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     const newMsg = await prisma.message.create({
