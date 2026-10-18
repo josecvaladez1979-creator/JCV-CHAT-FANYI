@@ -577,20 +577,30 @@ app.get(
 // 4. VALIDACIÓN CENTRAL DE PLANES EMPRESARIALES
 // --------------------------------------------------------
 
-type B2BTierId = keyof typeof B2B_TIERS;
 
-function getB2BTier(
-  tierId: unknown
-): (typeof B2B_TIERS)[B2BTierId] | null {
-  if (
-    typeof tierId !== "string" ||
-    !Object.prototype.hasOwnProperty.call(B2B_TIERS, tierId)
-  ) {
-    return null;
-  }
-
-  return B2B_TIERS[tierId as B2BTierId];
-}
+const B2B_TIERS = {
+  BASIC: {
+    id: "BASIC",
+    name: "Empresa Básica",
+    priceMXN: 599,
+    durationDays: 30,
+    seats: 5,
+  },
+  PROFESSIONAL: {
+    id: "PROFESSIONAL",
+    name: "Empresa Profesional",
+    priceMXN: 999,
+    durationDays: 30,
+    seats: 10,
+  },
+  CORPORATE: {
+    id: "CORPORATE",
+    name: "Empresa Corporativa",
+    priceMXN: 2099,
+    durationDays: 30,
+    seats: 25,
+  },
+} as const;
 
 // --------------------------------------------------------
 // 5. VALIDACIÓN DE CONFIGURACIÓN DE STRIPE
