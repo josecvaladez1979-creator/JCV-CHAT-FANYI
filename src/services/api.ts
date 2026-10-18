@@ -1,72 +1,97 @@
+
 const TOKEN_KEY = 'jcv_token';
-const USER_KEY = 'jcv_user';
 
 function getToken(): string | null {
-  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
-}
-
-function setToken(t: string | null) {
   try {
-    if (t) localStorage.setItem(TOKEN_KEY, t);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {}
-}
-
-async function reauth(): Promise<boolean> {
-  try {
-    const saved = localStorage.getItem(USER_KEY);
-    if (!saved) return false;
-    const user = JSON.parse(saved);
-    if (!user || !user.id) return false;
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ userId: user.id }),
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    if (data && data.token) { setToken(data.token); return true; }
-    return false;
-  } catch { return false; }
-}
-
-async function request(path: string, opts: RequestInit = {}, allowReauth = true): Promise<Response> {
-  const headers: Record<string, string> = { ...(opts.headers as Record<string, string>) };
-  const token = getToken();
-  if (token) headers['Authorization'] = 'Bearer ' + token;
-
-  let res = await fetch(path, { ...opts, headers, credentials: 'include' });
-
-  if (res.status === 401 && allowReauth) {
-    const ok = await reauth();
-    if (ok) {
-      headers['Authorization'] = 'Bearer ' + getToken();
-      res = await fetch(path, { ...opts, headers, credentials: 'include' });
-    }
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
   }
-  return res;
 }
 
-async function jsonOrThrow(res: Response, fallback: string) {
+function setToken(token: string | null) {
+  try {
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+  } catch {
+    // El almacenamiento puede estar bloqueado.
+  }
+}
+
+async function request(
+  path: string,
+  opts: RequestInit = {}
+): Promise<Response> {
+  const headers = new Headers(opts.headers);
+  const token = getToken();
+
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return fetch(path, {
+    ...opts,
+    headers,
+    credentials: 'include',
+  });
+}
+
+async function jsonOrThrow(
+  res: Response,
+  fallback: string
+): Promise<any> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || fallback);
+
+  if (!res.ok) {
+    throw new Error(data.error || data.message || fallback);
+  }
+
   return data;
 }
+
+function saveAuthToken(data: any) {
+  const token = data?.token || data?.accessToken;
+
+  if (token) {
+    setToken(token);
+  }
+}
+
+const B2B_PLAN_IDS = [
+  'BASIC',
+  'PROFESSIONAL',
+  'CORPORATE',
+] as const;
+
+type B2BPlanId = (typeof B2B_PLAN_IDS)[number];
 
 export const api = {
   async getSiliconFlowStatus() {
     const res = await request('/api/siliconflow/status');
-    return res.json();
+    return jsonOrThrow(res, 'No se pudo consultar el estado de la IA');
   },
 
-  async translate(text: string, targetLang: string, sourceLang?: string, model?: string) {
+  async translate(
+    text: string,
+    targetLang: string,
+    sourceLang?: string,
+    model?: string
+  ) {
     const res = await request('/api/siliconflow/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, targetLang, sourceLang, model }),
+      body: JSON.stringify({
+        text,
+        targetLang,
+        sourceLang,
+        model,
+      }),
     });
-    return jsonOrThrow(res, 'Translation failed');
+
+    return jsonOrThrow(res, 'Error de traducción');
   },
 
   async processAudio(audioBase64: string, targetLang: string) {
@@ -75,28 +100,37 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ audioBase64, targetLang }),
     });
-    return jsonOrThrow(res, 'Audio processing failed');
+
+    return jsonOrThrow(res, 'Error al procesar el audio');
   },
 
   async getChannels() {
     const res = await request('/api/chat/channels');
-    const data = await res.json();
+    const data = await jsonOrThrow(res, 'No se pudieron cargar los canales');
     return data.channels;
   },
 
-  async createChannel(name: string, description: string, isE2EE = false) {
+  async createChannel(
+    name: string,
+    description: string,
+    isE2EE = false
+  ) {
     const res = await request('/api/chat/channels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description, isE2EE }),
     });
-    const data = await res.json();
+
+    const data = await jsonOrThrow(res, 'No se pudo crear el canal');
     return data.channel;
   },
 
   async getMessages(channelId: string) {
-    const res = await request('/api/chat/messages?channelId=' + encodeURIComponent(channelId));
-    const data = await res.json();
+    const res = await request(
+      '/api/chat/messages?channelId=' + encodeURIComponent(channelId)
+    );
+
+    const data = await jsonOrThrow(res, 'No se pudieron cargar los mensajes');
     return data.messages;
   },
 
@@ -106,72 +140,187 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(messageData),
     });
-    const data = await jsonOrThrow(res, 'Failed to send message');
+
+    const data = await jsonOrThrow(res, 'No se pudo enviar el mensaje');
     return data.message;
   },
 
   async getUsers() {
     const res = await request('/api/auth/users');
-    const data = await res.json();
+    const data = await jsonOrThrow(res, 'No se pudieron cargar los usuarios');
     return data.users;
   },
 
-  async login(params: { email?: string; userId?: string; password?: string }) {
-    const res = await request('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    }, false);
-    const data = await jsonOrThrow(res, 'Login failed');
-    if (data && data.token) setToken(data.token);
+  async login(params: {
+    email?: string;
+    userId?: string;
+    password?: string;
+  }) {
+    const res = await request(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      }
+    );
+
+    const data = await jsonOrThrow(res, 'No se pudo iniciar sesión');
+    saveAuthToken(data);
     return data;
   },
 
-  async register(data: { name: string; email: string; password?: string; preferredLanguage?: string; avatar?: string }) {
+  async register(data: {
+    name: string;
+    email: string;
+    password?: string;
+    preferredLanguage?: string;
+    avatar?: string;
+  }) {
     const res = await request('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    }, false);
-    const out = await jsonOrThrow(res, 'Registration failed');
-    if (out && out.token) setToken(out.token);
-    return out;
+    });
+
+    const result = await jsonOrThrow(res, 'No se pudo crear la cuenta');
+    saveAuthToken(result);
+    return result;
   },
 
-  async createCheckout(cycle: string, gateway: string, userId: string) {
-    const isB2B = cycle === 'anual' || cycle === '1y';
-    const planId = isB2B ? 'B2B_1Y' : (cycle === 'mensual' || cycle === '1m' ? 'B2C_1M' : 'B2C_15D');
-    const body = isB2B
-      ? { companyName: 'Mi Empresa', planId, gateway }
-      : { planId, gateway };
-    const path = isB2B ? '/api/b2b/checkout' : '/api/b2c/checkout';
-    const res = await request(path, {
+  // Checkout B2C: conserva los identificadores de los planes individuales.
+  async createCheckout(
+    cycle: string,
+    gateway: string,
+    userId: string
+  ) {
+    void userId;
+
+    const planId =
+      cycle === 'anual' || cycle === '1y' || cycle === 'B2C_1Y'
+        ? 'B2C_1Y'
+        : cycle === 'mensual' || cycle === '1m' || cycle === 'B2C_1M'
+          ? 'B2C_1M'
+          : cycle === 'B2C_15D'
+            ? 'B2C_15D'
+            : 'B2C_15D';
+
+    const res = await request('/api/b2c/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ planId, gateway }),
     });
-    const data = await jsonOrThrow(res, 'Checkout creation failed');
-    return { orderId: data.orderId, checkoutUrl: data.url, cycle, gateway };
+
+    const data = await jsonOrThrow(res, 'No se pudo crear el pago B2C');
+
+    return {
+      orderId: data.orderId,
+      checkoutUrl: data.url,
+      cycle,
+      gateway,
+    };
   },
 
-  async confirmSubscription(userId: string, cycle: string, gateway: string, orderId: string) {
+  // Lista los planes empresariales.
+  async getB2BPlans() {
+    const res = await request('/api/b2b/plans');
+    const data = await jsonOrThrow(
+      res,
+      'No se pudieron cargar los planes empresariales'
+    );
+
+    return {
+      ...data,
+      plans: Array.isArray(data.plans)
+        ? data.plans.filter((plan: any) =>
+            B2B_PLAN_IDS.includes(plan.id as B2BPlanId)
+          )
+        : [],
+    };
+  },
+
+  // Inicia el checkout de uno de los tres niveles B2B.
+  async createB2BCheckout(
+    companyName: string,
+    planId: B2BPlanId,
+    gateway: string
+  ) {
+    if (!B2B_PLAN_IDS.includes(planId)) {
+      throw new Error('El plan empresarial seleccionado no es válido.');
+    }
+
+    if (!companyName.trim()) {
+      throw new Error('Debes indicar el nombre de tu empresa.');
+    }
+
+    const res = await request('/api/b2b/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyName: companyName.trim(),
+        planId,
+        gateway,
+      }),
+    });
+
+    const data = await jsonOrThrow(
+      res,
+      'No se pudo crear el pago empresarial'
+    );
+
+    return {
+      ...data,
+      orderId: data.orderId,
+      url: data.url || data.checkoutUrl,
+    };
+  },
+
+  async confirmSubscription(
+    userId: string,
+    cycle: string,
+    gateway: string,
+    orderId: string
+  ) {
+    void userId;
+    void cycle;
+    void gateway;
+
     const res = await request('/api/auth/me');
-    const data = await res.json();
-    return { success: true, user: data.user, orderId };
+    const data = await jsonOrThrow(
+      res,
+      'No se pudo verificar la sesión'
+    );
+
+    return {
+      success: true,
+      user: data.user,
+      orderId,
+    };
   },
 
   async getVaultPlans() {
     const res = await request('/api/vault/plans');
-    return res.json();
+    return jsonOrThrow(res, 'No se pudieron cargar los planes Vault');
   },
 
-  async createVaultCheckout(planId: string, gateway = 'mercadopago', clientEmail?: string, rfc?: string) {
+  async createVaultCheckout(
+    planId: string,
+    gateway = 'mercadopago',
+    clientEmail?: string,
+    rfc?: string
+  ) {
     const res = await request('/api/vault/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId, gateway, clientEmail, rfc }),
+      body: JSON.stringify({
+        planId,
+        gateway,
+        clientEmail,
+        rfc,
+      }),
     });
-    return jsonOrThrow(res, 'Vault checkout failed');
+
+    return jsonOrThrow(res, 'No se pudo iniciar el pago Vault');
   },
 
   async translateVaultContract(params: any) {
@@ -180,12 +329,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
-    return jsonOrThrow(res, 'Contract translation failed');
+
+    return jsonOrThrow(res, 'No se pudo traducir el contrato');
   },
 
   async getVaultCertificates() {
     const res = await request('/api/vault/certificates');
-    const data = await res.json();
+    const data = await jsonOrThrow(
+      res,
+      'No se pudieron cargar los certificados'
+    );
+
     return data.certificates;
   },
 
@@ -195,7 +349,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
-    const data = await res.json();
+
+    const data = await jsonOrThrow(
+      res,
+      'No se pudo registrar el certificado'
+    );
+
     return data.certificate;
   },
 
@@ -205,6 +364,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(signalData),
     });
-    return res.json();
+
+    return jsonOrThrow(res, 'No se pudo enviar la señal de llamada');
   },
 };
