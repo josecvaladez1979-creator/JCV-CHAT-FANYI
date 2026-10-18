@@ -24,9 +24,9 @@ enum B2CPlanId {
 }
 
 enum B2BPlanId {
-  B2B_15D
-  B2B_1M
-  B2B_1Y
+  BASIC
+  PROFESSIONAL
+  CORPORATE
 }
 
 enum SubscriptionStatus {
