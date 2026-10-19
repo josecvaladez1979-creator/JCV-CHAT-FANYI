@@ -602,6 +602,22 @@ const B2B_TIERS = {
   },
 } as const;
 
+let stripeClient: Stripe | null = null;
+
+function getStripe(): Stripe | null {
+  const secretKey = process.env.STRIPE_SECRET_KEY?.trim();
+
+  if (!secretKey || !secretKey.startsWith("sk_")) {
+    return null;
+  }
+
+  if (!stripeClient) {
+    stripeClient = new Stripe(secretKey);
+  }
+
+  return stripeClient;
+}
+
 // --------------------------------------------------------
 // 5. VALIDACIÓN DE CONFIGURACIÓN DE STRIPE
 // --------------------------------------------------------
