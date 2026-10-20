@@ -1030,18 +1030,26 @@ app.get(
   }
 );
 
-// --------------------------------------------------------
-// 5. MANEJO GENERAL DE ERRORES
-// --------------------------------------------------------
+ // --------------------------------------------------------
+ // 5. MANEJO GENERAL DE ERRORES
+ // --------------------------------------------------------
 
 app.use(
   (
-    error: Error,
+    error: unknown,
     _req: Request,
     res: Response,
     _next: NextFunction
   ): void => {
-    console.error("Error no controlado en Express:", error.message);
+    console.error("Error no controlado en Express:");
+
+    if (error instanceof Error) {
+      console.error("Nombre:", error.name);
+      console.error("Mensaje:", error.message);
+      console.error("Stack:", error.stack);
+    } else {
+      console.error("Detalle:", error);
+    }
 
     if (res.headersSent) {
       return;
