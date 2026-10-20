@@ -66,6 +66,101 @@ const ACCESS_SECRET =
 const REFRESH_SECRET =
   JWT_REFRESH_SECRET || "DEV_ONLY_REFRESH_SECRET_CHANGE_ME_32_CHARS";
 
+const JWT_ISSUER = "jcv-chat-fanyi";
+const JWT_AUDIENCE = "jcv-chat-fanyi-client";
+
+// Genera el token de acceso: dura 15 minutos.
+function signAccessToken(user: AuthUser): string {
+  return jwt.sign(
+    {
+      email: user.email,
+      role: user.role,
+      orgId: user.orgId ?? null,
+      tokenType: "access",
+    },
+    ACCESS_SECRET,
+    {
+      subject: user.id,
+      expiresIn: "15m",
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }
+  );
+}
+
+// Genera el token de renovación: dura 7 días.
+function signRefreshToken(userId: string): string {
+  return jwt.sign(
+    {
+      tokenType: "refresh",
+    },
+    REFRESH_SECRET,
+    {
+      subject: userId,
+      expiresIn: "7d",
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }
+  );
+}
+
+// Protege las rutas que requieren una sesión válida.
+function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const authorization = req.headers.authorization;
+
+  if (!authorization || !/^Bearer\s+\S+$/i.test(authorization)) {
+    res.status(401).json({
+      error: "Debes iniciar sesión.",
+    });
+    return;
+  }
+
+  const token = authorization.replace(/^Bearer\s+/i, "");
+
+  try {
+    const payload = jwt.verify(token, ACCESS_SECRET, {
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    }) as jwt.JwtPayload;
+
+    if (
+      payload.tokenType !== "access" ||
+      typeof payload.sub !== "string"
+    ) {
+      res.status(401).json({
+        error: "Token de acceso inválido.",
+      });
+      return;
+    }
+
+    req.user = {
+      id: payload.sub,
+      email:
+        typeof payload.email === "string"
+          ? payload.email
+          : undefined,
+      role:
+        typeof payload.role === "string"
+          ? (payload.role as Role)
+          : undefined,
+      orgId:
+        typeof payload.orgId === "string"
+          ? payload.orgId
+          : null,
+    };
+
+    next();
+  } catch {
+    res.status(401).json({
+      error: "La sesión ha vencido. Inicia sesión nuevamente.",
+    });
+  }
+}
+
 // ========================================================
 // 2. CORS Y SEGURIDAD HTTP
 // ========================================================
