@@ -31,6 +31,8 @@ const __dirname = path.dirname(__filename);
 
 const prisma = new PrismaClient();
 
+const PAYMENT_CURRENCY = "MXN" as const;
+
 const PORT = Number(process.env.PORT || 3000);
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PRODUCTION = NODE_ENV === "production";
