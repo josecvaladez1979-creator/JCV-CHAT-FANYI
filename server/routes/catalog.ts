@@ -87,3 +87,17 @@ export function getTopup(value: unknown): TopupPack | null {
     ? WALLET_TOPUPS[value]
     : null;
   }
+
+// --- ROUTER PARA server.ts ---
+import type { FastifyInstance } from "fastify";
+
+export const catalogRouter = async (app: FastifyInstance) => {
+  app.get("/catalog", async () => {
+    return {
+      currency: CURRENCY,
+      checkoutEnabled: CHECKOUT_ENABLED,
+      tiers: B2B_TIERS,
+      topups: WALLET_TOPUPS,
+    };
+  });
+};
