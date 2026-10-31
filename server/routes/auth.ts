@@ -21,6 +21,42 @@ export const authRouter = Router();
 
 const BCRYPT_COST = 12;
 
+// Idiomas que acepta la interfaz (coincide con SUPPORTED_LANGUAGES del frontend).
+const LANGUAGE_CODES = [
+  "es", "en", "zh", "ja", "fr", "de", "pt", "it", "ru", "ko", "ar", "hi",
+];
+
+// La interfaz usa roles en minúsculas y nombres propios de empresa.
+const CLIENT_ROLE: Record<Role, string> = {
+  USER: "user",
+  ADMIN: "admin",
+  ORG_OWNER: "b2b_owner",
+  ORG_MEMBER: "b2b_member",
+};
+
+type ClientUserSource = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  orgId: string | null;
+  avatar: string | null;
+  preferredLanguage: string;
+};
+
+// Forma de usuario que espera el frontend. Nunca incluye el hash de contraseña.
+function toClientUser(u: ClientUserSource) {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: CLIENT_ROLE[u.role],
+    orgId: u.orgId ?? undefined,
+    avatar: u.avatar ?? "",
+    preferredLanguage: u.preferredLanguage,
+  };
+}
+
 // Hash de relleno: si el correo no existe se compara igualmente contra
 // este hash, para que el tiempo de respuesta no revele qué cuentas existen.
 const DUMMY_HASH = bcrypt.hashSync(
@@ -119,14 +155,39 @@ authRouter.post(
       return;
     }
 
+    const requestedLanguage = req.body?.preferredLanguage;
+    const preferredLanguage =
+      typeof requestedLanguage === "string" &&
+      LANGUAGE_CODES.includes(requestedLanguage)
+        ? requestedLanguage
+        : "es";
+
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
 
-    let user: SessionUser & { name: string };
+    let user: SessionUser & {
+      name: string;
+      avatar: string | null;
+      preferredLanguage: string;
+    };
 
     try {
       user = await prisma.user.create({
-        data: { name, email, passwordHash, wallet: { create: {} } },
-        select: { id: true, name: true, email: true, role: true, orgId: true },
+        data: {
+          name,
+          email,
+          passwordHash,
+          preferredLanguage,
+          wallet: { create: {} },
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          orgId: true,
+          avatar: true,
+          preferredLanguage: true,
+        },
       });
     } catch (error) {
       if (
@@ -145,12 +206,7 @@ authRouter.post(
 
     res.status(201).json({
       message: "Cuenta creada correctamente.",
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
+      user: toClientUser(user),
       accessToken,
       tokenType: "Bearer",
       expiresIn: ACCESS_TTL_SECONDS,
@@ -199,12 +255,7 @@ authRouter.post(
 
     res.status(200).json({
       message: "Sesión iniciada correctamente.",
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
+      user: toClientUser(user),
       accessToken,
       tokenType: "Bearer",
       expiresIn: ACCESS_TTL_SECONDS,
@@ -348,6 +399,7 @@ authRouter.get(
         email: true,
         role: true,
         orgId: true,
+        avatar: true,
         preferredLanguage: true,
       },
     });
@@ -357,6 +409,6 @@ authRouter.get(
       return;
     }
 
-    res.status(200).json({ user });
+    res.status(200).json({ user: toClientUser(user) });
   })
 );
