@@ -1,103 +1,155 @@
-// ========================================================
-// CATÁLOGO COMERCIAL — ÚNICA FUENTE DE VERDAD
-// Todos los importes se guardan en CENTAVOS de MXN (enteros).
-// priceMXN solo existe para mostrar al usuario.
-// ========================================================
+import { Router } from "express";
+import { isConfigured } from "../config";
+import {
+  B2B_TIERS,
+  CHECKOUT_ENABLED,
+  CONTRACT_TIERS,
+  CONTRACT_TRANSLATION_ENABLED,
+  CURRENCY,
+  EXPIRY_NOTICE,
+  TARIFFS,
+  WALLET_TOPUPS,
+  getB2BTier,
+  packNotice,
+} from "../catalog";
+import { asyncHandler } from "../http";
+import { requireAuth } from "../security";
+import { getWalletState } from "../wallet";
 
-export const CURRENCY = "MXN" as const;
+export const catalogRouter = Router();
 
-// El checkout real (sesión de pago + webhook) aún no existe.
-// Mientras sea false, ningún plan ni recarga se presenta como comprable.
-export const CHECKOUT_ENABLED = false;
-
-// -------------------- Planes empresariales --------------------
-
-export type B2BTierId = "BASIC" | "PROFESSIONAL" | "CORPORATE";
-
-export type B2BTier = {
-  id: B2BTierId;
-  name: string;
-  priceCents: number;
-  priceMXN: number;
-  durationDays: number;
-  seats: number;
-};
-
-function tier(
-  id: B2BTierId,
-  name: string,
-  priceMXN: number,
-  seats: number
-): B2BTier {
-  return {
-    id,
-    name,
-    priceCents: priceMXN * 100,
-    priceMXN,
-    durationDays: 30,
-    seats,
-  };
+function stripeConfigured(): boolean {
+  const key = process.env.STRIPE_SECRET_KEY?.trim();
+  return isConfigured(key) && key!.startsWith("sk_");
 }
 
-export const B2B_TIERS: Record<B2BTierId, B2BTier> = {
-  BASIC: tier("BASIC", "Empresa Básica", 599, 5),
-  PROFESSIONAL: tier("PROFESSIONAL", "Empresa Profesional", 999, 10),
-  CORPORATE: tier("CORPORATE", "Empresa Corporativa", 2099, 25),
-};
-
-export function getB2BTier(value: unknown): B2BTier | null {
-  if (typeof value !== "string") return null;
-  return Object.prototype.hasOwnProperty.call(B2B_TIERS, value)
-    ? B2B_TIERS[value as B2BTierId]
-    : null;
+function stripePriceConfigured(tierId: string): boolean {
+  const value = process.env[`STRIPE_PRICE_${tierId}`]?.trim();
+  return isConfigured(value) && value!.startsWith("price_");
 }
 
-// -------------------- Recargas de saldo --------------------
-// Se asume 1 MXN pagado = 1 MXN de saldo. Si quieres bonificaciones,
-// se cambia creditCents aquí y en ningún otro sitio.
+// -------------------- Planes empresariales (público) --------------------
 
-export type TopupPack = {
-  id: string;
-  priceCents: number;
-  creditCents: number;
-  priceMXN: number;
-  creditMXN: number;
-};
+catalogRouter.get("/b2b/plans", (_req, res) => {
+  res.status(200).json({
+    currency: CURRENCY,
+    billingPeriod: "month",
+    plans: Object.values(B2B_TIERS).map((plan) => ({
+      ...plan,
+      // Solo es comprable cuando existe un checkout real y su precio en el proveedor.
+      purchasable: CHECKOUT_ENABLED && stripePriceConfigured(plan.id),
+    })),
+  });
+});
 
-function topup(mxn: number): TopupPack {
-  return {
-    id: `TOPUP_${mxn}`,
-    priceCents: mxn * 100,
-    creditCents: mxn * 100,
-    priceMXN: mxn,
-    creditMXN: mxn,
-  };
-}
+// Verificación previa. NO crea ninguna sesión de pago ni cobra nada.
+catalogRouter.post("/b2b/checkout/validate", requireAuth, (req, res) => {
+  const tier = getB2BTier(req.body?.tierId ?? req.body?.planId);
 
-export const WALLET_TOPUPS: Record<string, TopupPack> = {
-  TOPUP_100: topup(100),
-  TOPUP_200: topup(200),
-  TOPUP_500: topup(500),
-  TOPUP_1000: topup(1000),
-};
-
-export function getTopup(value: unknown): TopupPack | null {
-  if (typeof value !== "string") return null;
-  return Object.prototype.hasOwnProperty.call(WALLET_TOPUPS, value)
-    ? WALLET_TOPUPS[value]
-    : null;
+  if (!tier) {
+    res
+      .status(400)
+      .json({ error: "El plan empresarial seleccionado no es válido." });
+    return;
   }
 
-// --- ROUTER PARA server.ts ---
-import type { FastifyInstance } from "fastify";
+  if (!stripePriceConfigured(tier.id)) {
+    res.status(503).json({
+      error: "El precio de este plan todavía no está configurado en Stripe.",
+      planId: tier.id,
+    });
+    return;
+  }
 
-export const catalogRouter = async (app: FastifyInstance) => {
-  app.get("/catalog", async () => {
-    return {
-      currency: CURRENCY,
-      checkoutEnabled: CHECKOUT_ENABLED,
-      tiers: B2B_TIERS,
-      topups: WALLET_TOPUPS,
-    };
+  if (!stripeConfigured()) {
+    res
+      .status(503)
+      .json({ error: "El proveedor de pagos no está configurado." });
+    return;
+  }
+
+  res.status(200).json({
+    planValid: true,
+    plan: tier,
+    paymentProvider: "stripe",
+    paymentConfigured: true,
+    checkoutSessionCreated: false,
+    checkoutEnabled: CHECKOUT_ENABLED,
+    message:
+      "El plan y su precio son válidos. Aún no se ha creado ningún pago ni suscripción.",
   });
-};
+});
+
+// -------------------- Estado de proveedores (público) --------------------
+
+catalogRouter.get("/payments/providers", (_req, res) => {
+  res.status(200).json({
+    stripe: stripeConfigured(),
+    mercadoPago: isConfigured(process.env.MERCADOPAGO_ACCESS_TOKEN),
+    paypal:
+      isConfigured(process.env.PAYPAL_CLIENT_ID) &&
+      isConfigured(process.env.PAYPAL_CLIENT_SECRET),
+    currency: CURRENCY,
+    checkoutEnabled: CHECKOUT_ENABLED,
+  });
+});
+
+// -------------------- Precios públicos --------------------
+
+catalogRouter.get("/pricing", (_req, res) => {
+  res.status(200).json({
+    currency: CURRENCY,
+    free: ["Chat de texto en el mismo idioma"],
+    tariffs: TARIFFS,
+    topups: Object.values(WALLET_TOPUPS).map((pack) => ({
+      ...pack,
+      purchasable: CHECKOUT_ENABLED,
+      notice: packNotice(pack),
+    })),
+    expiryNotice: EXPIRY_NOTICE,
+    contracts: {
+      available: CONTRACT_TRANSLATION_ENABLED,
+      tiers: CONTRACT_TIERS,
+    },
+  });
+});
+
+// -------------------- Recargas y saldo --------------------
+
+catalogRouter.get("/ai-wallet/topups", requireAuth, (_req, res) => {
+  res.status(200).json({
+    currency: CURRENCY,
+    topups: Object.values(WALLET_TOPUPS).map((pack) => ({
+      ...pack,
+      purchasable: CHECKOUT_ENABLED,
+      notice: packNotice(pack),
+    })),
+    expiryNotice: EXPIRY_NOTICE,
+    note: "Las cantidades son recargas de saldo en pesos, no tarifas por minuto.",
+  });
+});
+
+catalogRouter.get(
+  "/wallet",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const state = await getWalletState(req.user!.id);
+
+    const daysLeft = state.expiresAt
+      ? Math.max(
+          0,
+          Math.ceil((state.expiresAt.getTime() - Date.now()) / 86_400_000)
+        )
+      : 0;
+
+    res.status(200).json({
+      currency: CURRENCY,
+      balanceCents: state.balanceCents,
+      balanceMXN: state.balanceCents / 100,
+      expiresAt: state.expiresAt ? state.expiresAt.toISOString() : null,
+      daysLeft,
+      expired: state.expired,
+      notice: state.balanceCents > 0 ? EXPIRY_NOTICE : null,
+    });
+  })
+);
