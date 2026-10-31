@@ -4,12 +4,13 @@ import { UsageFeature } from "@prisma/client";
 import {
   FEATURE_TRANSLATION,
   SILICONFLOW_BASE_URL,
-  TRANSLATION_PRICE_CENTS_PER_1K,
   isConfigured,
 } from "../config";
+import { TARIFFS } from "../catalog";
 import { asyncHandler } from "../http";
 import { requireAuth } from "../security";
 import { InsufficientFundsError, debitWallet, refundUsage } from "../wallet";
+import { textCostCents } from "../wallet-rules";
 
 export const translateRouter = Router();
 
@@ -92,12 +93,7 @@ translateRouter.post(
     const apiKey = process.env.SILICONFLOW_API_KEY?.trim();
     const model = process.env.TEXT_MODEL?.trim();
 
-    if (
-      !FEATURE_TRANSLATION ||
-      !isConfigured(apiKey) ||
-      !model ||
-      TRANSLATION_PRICE_CENTS_PER_1K === null
-    ) {
+    if (!FEATURE_TRANSLATION || !isConfigured(apiKey) || !model) {
       res.status(503).json({
         error: "El servicio de traducción no está disponible por ahora.",
       });
@@ -127,9 +123,11 @@ translateRouter.post(
       return;
     }
 
-    // Se cobra por bloques de 1.000 caracteres (mínimo un bloque).
-    const blocks = Math.max(1, Math.ceil(text.length / 1000));
-    const costCents = blocks * TRANSLATION_PRICE_CENTS_PER_1K;
+    // Cobro proporcional: tarifa por cada 1.000 caracteres, mínimo 1 centavo.
+    const costCents = textCostCents(
+      text.length,
+      TARIFFS.textTranslatedCentsPer1kChars
+    );
 
     let charge: { transactionId: string; balanceCents: number };
 
@@ -138,7 +136,7 @@ translateRouter.post(
         userId: req.user!.id,
         amountCents: costCents,
         feature: UsageFeature.TEXT_TRANSLATION,
-        metadata: { chars: text.length, blocks },
+        metadata: { chars: text.length },
       });
     } catch (error) {
       if (error instanceof InsufficientFundsError) {
