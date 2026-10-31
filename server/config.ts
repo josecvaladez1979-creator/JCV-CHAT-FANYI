@@ -71,21 +71,9 @@ export function isConfigured(value: string | undefined): boolean {
   return true;
 }
 
-function positiveInt(value: string | undefined): number | null {
-  if (!value || !/^\d+$/.test(value.trim())) return null;
-  const n = Number(value.trim());
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
-}
-
 // La traducción de pago está APAGADA por defecto. Para activarla
-// el propietario define FEATURE_TRANSLATION=on y la tarifa.
+// el propietario define FEATURE_TRANSLATION=on. La tarifa vive en catalog.ts.
 export const FEATURE_TRANSLATION = process.env.FEATURE_TRANSLATION === "on";
-
-// Tarifa decidida por el propietario, en centavos de MXN por cada
-// bloque de 1.000 caracteres. No hay valor por defecto a propósito.
-export const TRANSLATION_PRICE_CENTS_PER_1K = positiveInt(
-  process.env.TRANSLATION_PRICE_CENTS_PER_1K_CHARS
-);
 
 export const SILICONFLOW_BASE_URL = (
   process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1"
