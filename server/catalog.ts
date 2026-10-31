@@ -1,155 +1,132 @@
-import { Router } from "express";
-import { isConfigured } from "../config";
-import {
-  B2B_TIERS,
-  CHECKOUT_ENABLED,
-  CONTRACT_TIERS,
-  CONTRACT_TRANSLATION_ENABLED,
-  CURRENCY,
-  EXPIRY_NOTICE,
-  TARIFFS,
-  WALLET_TOPUPS,
-  getB2BTier,
-  packNotice,
-} from "../catalog";
-import { asyncHandler } from "../http";
-import { requireAuth } from "../security";
-import { getWalletState } from "../wallet";
+// ========================================================
+// CATÁLOGO COMERCIAL — ÚNICA FUENTE DE VERDAD
+// Todos los importes se guardan en CENTAVOS de MXN (enteros).
+// priceMXN solo existe para mostrar al usuario.
+// ========================================================
 
-export const catalogRouter = Router();
+export const CURRENCY = "MXN" as const;
 
-function stripeConfigured(): boolean {
-  const key = process.env.STRIPE_SECRET_KEY?.trim();
-  return isConfigured(key) && key!.startsWith("sk_");
+// El checkout real (sesión de pago + webhook) aún no existe.
+// Mientras sea false, ningún plan ni recarga se presenta como comprable.
+export const CHECKOUT_ENABLED = false;
+
+// -------------------- Planes empresariales --------------------
+
+export type B2BTierId = "BASIC" | "PROFESSIONAL" | "CORPORATE";
+
+export type B2BTier = {
+  id: B2BTierId;
+  name: string;
+  priceCents: number;
+  priceMXN: number;
+  durationDays: number;
+  seats: number;
+};
+
+function tier(
+  id: B2BTierId,
+  name: string,
+  priceMXN: number,
+  seats: number
+): B2BTier {
+  return {
+    id,
+    name,
+    priceCents: priceMXN * 100,
+    priceMXN,
+    durationDays: 30,
+    seats,
+  };
 }
 
-function stripePriceConfigured(tierId: string): boolean {
-  const value = process.env[`STRIPE_PRICE_${tierId}`]?.trim();
-  return isConfigured(value) && value!.startsWith("price_");
+export const B2B_TIERS: Record<B2BTierId, B2BTier> = {
+  BASIC: tier("BASIC", "Empresa Básica", 599, 5),
+  PROFESSIONAL: tier("PROFESSIONAL", "Empresa Profesional", 999, 10),
+  CORPORATE: tier("CORPORATE", "Empresa Corporativa", 2099, 25),
+};
+
+export function getB2BTier(value: unknown): B2BTier | null {
+  if (typeof value !== "string") return null;
+  return Object.prototype.hasOwnProperty.call(B2B_TIERS, value)
+    ? B2B_TIERS[value as B2BTierId]
+    : null;
 }
 
-// -------------------- Planes empresariales (público) --------------------
+// -------------------- Recargas de saldo --------------------
+// Se asume 1 MXN pagado = 1 MXN de saldo. Cada paquete tiene vigencia:
+// lo que no se consuma al vencer se pierde (ver wallet-rules.ts).
 
-catalogRouter.get("/b2b/plans", (_req, res) => {
-  res.status(200).json({
-    currency: CURRENCY,
-    billingPeriod: "month",
-    plans: Object.values(B2B_TIERS).map((plan) => ({
-      ...plan,
-      // Solo es comprable cuando existe un checkout real y su precio en el proveedor.
-      purchasable: CHECKOUT_ENABLED && stripePriceConfigured(plan.id),
-    })),
-  });
-});
+export type TopupPack = {
+  id: string;
+  priceCents: number;
+  creditCents: number;
+  priceMXN: number;
+  creditMXN: number;
+  validityDays: number;
+};
 
-// Verificación previa. NO crea ninguna sesión de pago ni cobra nada.
-catalogRouter.post("/b2b/checkout/validate", requireAuth, (req, res) => {
-  const tier = getB2BTier(req.body?.tierId ?? req.body?.planId);
+function topup(mxn: number, validityDays: number): TopupPack {
+  return {
+    id: `TOPUP_${mxn}`,
+    priceCents: mxn * 100,
+    creditCents: mxn * 100,
+    priceMXN: mxn,
+    creditMXN: mxn,
+    validityDays,
+  };
+}
 
-  if (!tier) {
-    res
-      .status(400)
-      .json({ error: "El plan empresarial seleccionado no es válido." });
-    return;
-  }
+export const WALLET_TOPUPS: Record<string, TopupPack> = {
+  TOPUP_100: topup(100, 7), // 1 semana
+  TOPUP_200: topup(200, 15), // 15 días
+  TOPUP_500: topup(500, 30), // 1 mes
+  TOPUP_1000: topup(1000, 60), // 2 meses
+};
 
-  if (!stripePriceConfigured(tier.id)) {
-    res.status(503).json({
-      error: "El precio de este plan todavía no está configurado en Stripe.",
-      planId: tier.id,
-    });
-    return;
-  }
+export function getTopup(value: unknown): TopupPack | null {
+  if (typeof value !== "string") return null;
+  return Object.prototype.hasOwnProperty.call(WALLET_TOPUPS, value)
+    ? WALLET_TOPUPS[value]
+    : null;
+}
 
-  if (!stripeConfigured()) {
-    res
-      .status(503)
-      .json({ error: "El proveedor de pagos no está configurado." });
-    return;
-  }
+// Texto que la interfaz DEBE mostrar antes de pagar. La redacción final
+// debe revisarla un abogado (normativa de consumo).
+export const EXPIRY_NOTICE =
+  "El saldo que no consumas antes de su vencimiento se pierde. Si recargas antes de que venza, el saldo que te quede se suma a tu nueva recarga y tu vigencia será la mayor entre la actual y la del nuevo paquete.";
 
-  res.status(200).json({
-    planValid: true,
-    plan: tier,
-    paymentProvider: "stripe",
-    paymentConfigured: true,
-    checkoutSessionCreated: false,
-    checkoutEnabled: CHECKOUT_ENABLED,
-    message:
-      "El plan y su precio son válidos. Aún no se ha creado ningún pago ni suscripción.",
-  });
-});
+export function packNotice(pack: TopupPack): string {
+  return `Este paquete vence a los ${pack.validityDays} días de la compra. ${EXPIRY_NOTICE}`;
+}
 
-// -------------------- Estado de proveedores (público) --------------------
+// -------------------- Tarifas de uso (centavos de MXN) --------------------
+// PROPUESTA pendiente de tu aprobación. El chat de texto en el mismo idioma
+// es gratis y no aparece aquí. Hoy solo la traducción de texto está conectada;
+// el resto queda definido para cuando existan audio, llamadas y video.
 
-catalogRouter.get("/payments/providers", (_req, res) => {
-  res.status(200).json({
-    stripe: stripeConfigured(),
-    mercadoPago: isConfigured(process.env.MERCADOPAGO_ACCESS_TOKEN),
-    paypal:
-      isConfigured(process.env.PAYPAL_CLIENT_ID) &&
-      isConfigured(process.env.PAYPAL_CLIENT_SECRET),
-    currency: CURRENCY,
-    checkoutEnabled: CHECKOUT_ENABLED,
-  });
-});
+export const TARIFFS = {
+  textTranslatedCentsPer1kChars: 100,
+  audioSameLanguageCentsPerMin: 50,
+  audioTranslatedCentsPerMin: 200,
+  callSameLanguageCentsPerMin: 100,
+  callTranslatedCentsPerMin: 600,
+  videoSameLanguageCentsPerMin: 200,
+  videoTranslatedCentsPerMin: 800,
+} as const;
 
-// -------------------- Precios públicos --------------------
+// -------------------- Traducción de contratos --------------------
+// Aún no existe la subida ni la extracción de texto; solo se define el
+// esquema de cobro. Los tramos se miden en caracteres, no en páginas.
 
-catalogRouter.get("/pricing", (_req, res) => {
-  res.status(200).json({
-    currency: CURRENCY,
-    free: ["Chat de texto en el mismo idioma"],
-    tariffs: TARIFFS,
-    topups: Object.values(WALLET_TOPUPS).map((pack) => ({
-      ...pack,
-      purchasable: CHECKOUT_ENABLED,
-      notice: packNotice(pack),
-    })),
-    expiryNotice: EXPIRY_NOTICE,
-    contracts: {
-      available: CONTRACT_TRANSLATION_ENABLED,
-      tiers: CONTRACT_TIERS,
-    },
-  });
-});
+export const CONTRACT_TRANSLATION_ENABLED = false;
 
-// -------------------- Recargas y saldo --------------------
+export const CONTRACT_TIERS = [
+  { id: "CONTRACT_S", label: "1 a 2 páginas", maxChars: 6000, priceCents: 7900 },
+  { id: "CONTRACT_M", label: "3 a 5 páginas", maxChars: 15000, priceCents: 14900 },
+  { id: "CONTRACT_L", label: "6 a 10 páginas", maxChars: 30000, priceCents: 24900 },
+] as const;
 
-catalogRouter.get("/ai-wallet/topups", requireAuth, (_req, res) => {
-  res.status(200).json({
-    currency: CURRENCY,
-    topups: Object.values(WALLET_TOPUPS).map((pack) => ({
-      ...pack,
-      purchasable: CHECKOUT_ENABLED,
-      notice: packNotice(pack),
-    })),
-    expiryNotice: EXPIRY_NOTICE,
-    note: "Las cantidades son recargas de saldo en pesos, no tarifas por minuto.",
-  });
-});
-
-catalogRouter.get(
-  "/wallet",
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const state = await getWalletState(req.user!.id);
-
-    const daysLeft = state.expiresAt
-      ? Math.max(
-          0,
-          Math.ceil((state.expiresAt.getTime() - Date.now()) / 86_400_000)
-        )
-      : 0;
-
-    res.status(200).json({
-      currency: CURRENCY,
-      balanceCents: state.balanceCents,
-      balanceMXN: state.balanceCents / 100,
-      expiresAt: state.expiresAt ? state.expiresAt.toISOString() : null,
-      daysLeft,
-      expired: state.expired,
-      notice: state.balanceCents > 0 ? EXPIRY_NOTICE : null,
-    });
-  })
-);
+export function contractTierFor(chars: number) {
+  if (!Number.isSafeInteger(chars) || chars <= 0) return null;
+  return CONTRACT_TIERS.find((t) => chars <= t.maxChars) ?? null;
+}
