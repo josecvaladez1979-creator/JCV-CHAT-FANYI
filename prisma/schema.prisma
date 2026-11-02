@@ -51,7 +51,6 @@ enum MessageModule {
   FREEMIUM
   B2C
   B2B
-  VAULT
 }
 
 enum CreditTxType {
@@ -59,6 +58,7 @@ enum CreditTxType {
   USAGE
   REFUND
   ADJUSTMENT
+  EXPIRY
 }
 
 enum UsageFeature {
@@ -128,6 +128,7 @@ model RefreshToken {
 
 // ═══════════════════════════════════════════════
 // SALDO PREPAGADO (recargas de 100, 200, 500 y 1000 MXN)
+// Con vigencia: al vencer, lo no consumido se pierde (movimiento EXPIRY).
 // Importes siempre en CENTAVOS de MXN, como enteros.
 // ═══════════════════════════════════════════════
 model Wallet {
@@ -137,6 +138,7 @@ model Wallet {
   orgId        String?             @unique
   org          Organization?       @relation(fields: [orgId], references: [id], onDelete: Restrict)
   balanceCents Int                 @default(0)
+  expiresAt    DateTime?           // vencimiento del saldo; lo no consumido se pierde
   currency     String              @default("MXN")
   transactions CreditTransaction[]
   createdAt    DateTime            @default(now())
@@ -268,18 +270,87 @@ model WebhookEvent {
 }
 
 // ═══════════════════════════════════════════════
-// VAULT CERTIFICATES — Contratos B2B destruidos
+// CONTROL FISCAL — ventas y gastos para tu contador (SAT / RESICO)
+// Sin llaves foráneas a propósito: los registros fiscales no deben cambiar
+// ni borrarse si se elimina un usuario o una organización.
+// No calcula impuestos: solo conserva los datos que tu contador necesita.
 // ═══════════════════════════════════════════════
-model VaultCertificate {
-  id            String   @id @default(cuid())
-  documentName  String
-  destroyedAt   String
-  hash          String
-  shortHash     String
-  pages         Int
-  timerSelected String
-  packRemaining String
-  cfdiFolio     String
-  status        String   @default("PURGADO PERMANENTEMENTE")
-  createdAt     DateTime @default(now())
+enum SaleKind {
+  TOPUP
+  B2B_SUBSCRIPTION
+  CONTRACT_TRANSLATION
+  REFUND
+  OTHER
+}
+
+enum CfdiStatus {
+  PENDING
+  ISSUED
+  INCLUDED_IN_GLOBAL
+  CANCELED
+  NOT_APPLICABLE
+}
+
+enum ExpenseCategory {
+  HOSTING
+  DATABASE
+  AI
+  PAYMENT_FEES
+  DOMAIN
+  TOOLS
+  OTHER
+}
+
+model SaleRecord {
+  id                 String     @id @default(cuid())
+  kind               SaleKind
+  provider           String
+  providerRef        String
+  userId             String?
+  orgId              String?
+  customerName       String?
+  customerRfc        String?
+  customerEmail      String?
+  currency           String     @default("MXN")
+  netCents           Int        // subtotal sin IVA
+  ivaCents           Int        @default(0)
+  totalCents         Int        // lo que pagó el cliente (negativo en reembolsos)
+  gatewayFeeCents    Int?       // comisión de la pasarela, si se conoce
+  taxpayerRegistered Boolean    // si estabas registrado en el SAT al vender
+  paymentMethod      String?
+  paidAt             DateTime   // fecha de cobro efectivo
+  cfdiStatus         CfdiStatus
+  cfdiUuid           String?    @unique
+  cfdiFolio          String?
+  cfdiIssuedAt       DateTime?
+  globalInvoiceRef   String?
+  refundOfId         String?
+  metadata           Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([provider, providerRef])
+  @@index([paidAt])
+  @@index([cfdiStatus])
+}
+
+model ExpenseRecord {
+  id             String          @id @default(cuid())
+  spentAt        DateTime
+  supplier       String
+  concept        String
+  category       ExpenseCategory
+  currency       String          @default("MXN")
+  originalCents  Int?            // importe en la moneda original, si no es MXN
+  fxRate         Float?          // tipo de cambio usado
+  amountMxnCents Int
+  ivaCents       Int             @default(0)
+  hasCfdi        Boolean         @default(false)
+  cfdiUuid       String?
+  receiptNote    String?
+  createdBy      String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([spentAt])
 }
