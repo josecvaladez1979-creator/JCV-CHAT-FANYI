@@ -14,6 +14,7 @@ import {
 } from "../catalog";
 import { asyncHandler } from "../http";
 import { requireAuth } from "../security";
+import { checkoutReady } from "../stripe-payments";
 import { getWalletState } from "../wallet";
 
 export const catalogRouter = Router();
@@ -36,8 +37,9 @@ catalogRouter.get("/b2b/plans", (_req, res) => {
     billingPeriod: "month",
     plans: Object.values(B2B_TIERS).map((plan) => ({
       ...plan,
-      // Solo es comprable cuando existe un checkout real y su precio en el proveedor.
-      purchasable: CHECKOUT_ENABLED && stripePriceConfigured(plan.id),
+      // El cobro de planes empresariales (suscripción mensual) aún no está
+      // implementado: solo existe el de recargas. No se presenta como comprable.
+      purchasable: false,
     })),
   });
 });
@@ -91,6 +93,7 @@ catalogRouter.get("/payments/providers", (_req, res) => {
       isConfigured(process.env.PAYPAL_CLIENT_SECRET),
     currency: CURRENCY,
     checkoutEnabled: CHECKOUT_ENABLED,
+    checkoutReady: checkoutReady(),
   });
 });
 
@@ -103,7 +106,7 @@ catalogRouter.get("/pricing", (_req, res) => {
     tariffs: TARIFFS,
     topups: Object.values(WALLET_TOPUPS).map((pack) => ({
       ...pack,
-      purchasable: CHECKOUT_ENABLED,
+      purchasable: checkoutReady(),
       notice: packNotice(pack),
     })),
     expiryNotice: EXPIRY_NOTICE,
@@ -121,7 +124,7 @@ catalogRouter.get("/ai-wallet/topups", requireAuth, (_req, res) => {
     currency: CURRENCY,
     topups: Object.values(WALLET_TOPUPS).map((pack) => ({
       ...pack,
-      purchasable: CHECKOUT_ENABLED,
+      purchasable: checkoutReady(),
       notice: packNotice(pack),
     })),
     expiryNotice: EXPIRY_NOTICE,
