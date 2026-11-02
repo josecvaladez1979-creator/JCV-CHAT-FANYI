@@ -12,8 +12,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALLOWED_ORIGINS, IS_PRODUCTION, NODE_ENV, PORT } from "./server/config";
 import { prisma } from "./server/db";
+import { adminFiscalRouter } from "./server/routes/admin-fiscal";
 import { authRouter } from "./server/routes/auth";
-import { catalogRouter } from "./server/routes/catalog";
+import { catalogRouter } from "./server/routes/store";
+import { paymentsRouter, stripeWebhookHandler } from "./server/routes/payments";
 import { systemRouter } from "./server/routes/system";
 import { translateRouter } from "./server/routes/translate";
 
@@ -52,12 +54,17 @@ app.use(
   })
 );
 
+// Webhook de Stripe: necesita el cuerpo ORIGINAL (la firma se calcula sobre él),
+// por eso va ANTES de express.json() y de cualquier limitador de /api.
+app.post(
+  "/api/webhooks/stripe",
+  express.raw({ type: "application/json", limit: "1mb" }),
+  stripeWebhookHandler
+);
+
 app.use(cookieParser());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false, limit: "100kb" }));
-
-// ADVERTENCIA para el bloque de pagos: los webhooks que necesitan el cuerpo
-// original (firma de Stripe) deben registrarse ANTES de express.json().
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -75,6 +82,8 @@ app.use(systemRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", catalogRouter);
 app.use("/api", translateRouter);
+app.use("/api", paymentsRouter);
+app.use("/api/admin", adminFiscalRouter);
 
 // Cualquier otra ruta de la API responde JSON, nunca HTML.
 app.use("/api", (_req: Request, res: Response) => {
