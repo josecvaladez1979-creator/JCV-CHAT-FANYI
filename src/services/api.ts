@@ -1,4 +1,3 @@
-
 const TOKEN_KEY = 'jcv_token';
 
 function getToken(): string | null {
@@ -21,9 +20,55 @@ function setToken(token: string | null) {
   }
 }
 
+function saveAuthToken(data: any) {
+  const token = data?.token || data?.accessToken;
+
+  if (token) {
+    setToken(token);
+  }
+}
+
+// Rutas que nunca deben disparar una renovación de sesión.
+const NO_REFRESH = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+];
+
+// Si varias solicitudes fallan a la vez, solo se renueva una vez.
+let refreshing: Promise<boolean> | null = null;
+
+// El token de acceso dura 15 minutos. La cookie de renovación (7 días)
+// permite obtener uno nuevo sin pedir la contraseña otra vez.
+async function refreshSession(): Promise<boolean> {
+  if (!refreshing) {
+    refreshing = fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          setToken(null);
+          return false;
+        }
+        const data = await res.json().catch(() => ({}));
+        saveAuthToken(data);
+        return Boolean(data?.accessToken);
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshing = null;
+      });
+  }
+
+  return refreshing;
+}
+
 async function request(
   path: string,
-  opts: RequestInit = {}
+  opts: RequestInit = {},
+  retry = true
 ): Promise<Response> {
   const headers = new Headers(opts.headers);
   const token = getToken();
@@ -32,11 +77,19 @@ async function request(
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  return fetch(path, {
+  const res = await fetch(path, {
     ...opts,
     headers,
     credentials: 'include',
   });
+
+  if (res.status === 401 && retry && !NO_REFRESH.includes(path)) {
+    if (await refreshSession()) {
+      return request(path, opts, false);
+    }
+  }
+
+  return res;
 }
 
 async function jsonOrThrow(
@@ -46,18 +99,12 @@ async function jsonOrThrow(
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(data.error || data.message || fallback);
+    const error: any = new Error(data.error || data.message || fallback);
+    error.status = res.status;
+    throw error;
   }
 
   return data;
-}
-
-function saveAuthToken(data: any) {
-  const token = data?.token || data?.accessToken;
-
-  if (token) {
-    setToken(token);
-  }
 }
 
 const B2B_PLAN_IDS = [
@@ -146,7 +193,7 @@ export const api = {
   },
 
   async getUsers() {
-    const res = await request('/api/auth/users');
+    const res = await request('/api/chat/users');
     const data = await jsonOrThrow(res, 'No se pudieron cargar los usuarios');
     return data.users;
   },
@@ -187,6 +234,89 @@ export const api = {
     saveAuthToken(result);
     return result;
   },
+
+  // Usuario de la sesión actual (renueva el token si hace falta).
+  async getMe() {
+    const res = await request('/api/auth/me');
+    const data = await jsonOrThrow(res, 'No se pudo verificar la sesión');
+    return data.user;
+  },
+
+  // ---- Chat en tiempo real ----
+
+  // Boleto de un solo uso (30 s) para abrir la conexión de tiempo real.
+  async getStreamTicket() {
+    const res = await request('/api/chat/stream-ticket', { method: 'POST' });
+    const data = await jsonOrThrow(res, 'No se pudo abrir la conexión en tiempo real');
+    return data.ticket as string;
+  },
+
+  async joinChannel(channelId: string) {
+    const res = await request(
+      '/api/chat/channels/' + encodeURIComponent(channelId) + '/join',
+      { method: 'POST' }
+    );
+    const data = await jsonOrThrow(res, 'No se pudo entrar al canal');
+    return data.channel;
+  },
+
+  async sendTyping(channelId: string, isTyping: boolean) {
+    await request('/api/chat/typing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channelId, isTyping }),
+    });
+  },
+
+  async toggleReaction(messageId: string, emoji: string) {
+    const res = await request(
+      '/api/chat/messages/' + encodeURIComponent(messageId) + '/reactions',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji }),
+      }
+    );
+    const data = await jsonOrThrow(res, 'No se pudo reaccionar');
+    return data.reactions as Record<string, string[]>;
+  },
+
+  // Cierra la sesión en el servidor (revoca la renovación) y borra el token local.
+  async logout() {
+    try {
+      await request('/api/auth/logout', { method: 'POST' });
+    } finally {
+      setToken(null);
+    }
+  },
+
+  // ---- Saldo y recargas ----
+
+  // Precios públicos: tarifas, recargas con su vigencia y el aviso de vencimiento.
+  async getPricing() {
+    const res = await request('/api/pricing');
+    return jsonOrThrow(res, 'No se pudieron cargar los precios');
+  },
+
+  // Saldo del usuario: balanceCents, expiresAt, daysLeft, expired.
+  async getWallet() {
+    const res = await request('/api/wallet');
+    return jsonOrThrow(res, 'No se pudo consultar tu saldo');
+  },
+
+  // Crea el pago de una recarga. El servidor decide el importe; aquí solo
+  // se envía qué paquete se quiere y que el usuario aceptó el aviso.
+  async createTopupCheckout(packId: string, acceptExpiryTerms: boolean) {
+    const res = await request('/api/wallet/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packId, acceptExpiryTerms }),
+    });
+
+    return jsonOrThrow(res, 'No se pudo iniciar el pago');
+  },
+
+  // ---- Heredados (se retirarán cuando se limpien los demás componentes) ----
 
   // Checkout B2C: conserva los identificadores de los planes individuales.
   async createCheckout(
