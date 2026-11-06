@@ -94,6 +94,8 @@ model User {
 
   // Mensajes
   messages          Message[]
+  channelMemberships ChannelMember[]
+  reactionsGiven    MessageReaction[]
 
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -231,7 +233,8 @@ model Message {
   audioBase64         String?        @db.Text
   aiModel             String?
   translationAccuracy String?
-  reactions           Json?          // { "👍": ["user1", "user2"] }
+  reactions           Json?          // en desuso: ahora se usa MessageReaction
+  reactionRecords     MessageReaction[]
   createdAt           DateTime       @default(now())
 
   @@index([channelId, createdAt])
@@ -248,7 +251,9 @@ model Channel {
   description     String?
   isPrivate       Boolean  @default(false)
   isE2EE          Boolean  @default(false)
-  e2eePassphrase  String?
+  e2eePassphrase  String?        // EN DESUSO: el servidor nunca debe guardar claves de cifrado
+  createdById     String?
+  members         ChannelMember[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -353,4 +358,33 @@ model ExpenseRecord {
   updatedAt      DateTime        @updatedAt
 
   @@index([spentAt])
+}
+
+
+// ═══════════════════════════════════════════════
+// CHAT — miembros de canal y reacciones
+// ═══════════════════════════════════════════════
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt  DateTime @default(now())
+
+  @@unique([channelId, userId])
+  @@index([userId])
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
 }
