@@ -11,9 +11,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALLOWED_ORIGINS, IS_PRODUCTION, NODE_ENV, PORT } from "./server/config";
+import { hub, startChatTimers } from "./server/chat-hub";
+import { ensureDefaultChannel } from "./server/chat-service";
 import { prisma } from "./server/db";
+import { bootstrapAdminFromEnv } from "./server/admin-bootstrap";
 import { adminFiscalRouter } from "./server/routes/admin-fiscal";
 import { authRouter } from "./server/routes/auth";
+import { chatRouter } from "./server/routes/chat";
 import { catalogRouter } from "./server/routes/store";
 import { paymentsRouter, stripeWebhookHandler } from "./server/routes/payments";
 import { systemRouter } from "./server/routes/system";
@@ -72,6 +76,8 @@ const apiLimiter = rateLimit({
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: { error: "Demasiadas solicitudes. Inténtalo de nuevo más tarde." },
+  // El chat tiene sus propios límites por usuario (más justos que uno por IP).
+  skip: (req) => req.originalUrl.startsWith("/api/chat/"),
 });
 
 app.use("/api", apiLimiter);
@@ -82,6 +88,7 @@ app.use(systemRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", catalogRouter);
 app.use("/api", translateRouter);
+app.use("/api/chat", chatRouter);
 app.use("/api", paymentsRouter);
 app.use("/api/admin", adminFiscalRouter);
 
@@ -152,6 +159,15 @@ app.use(
 async function startServer(): Promise<void> {
   await prisma.$connect();
 
+  try {
+    await bootstrapAdminFromEnv();
+    await ensureDefaultChannel();
+  } catch (error) {
+    console.error("[inicio] No se pudo preparar el administrador o el canal general:", error);
+  }
+
+  const stopChatTimers = startChatTimers();
+
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`JCV CHAT FĀNYÌ escuchando en el puerto ${PORT}`);
     console.log(`Entorno: ${NODE_ENV}`);
@@ -159,6 +175,8 @@ async function startServer(): Promise<void> {
 
   const shutdown = (signal: string) => {
     console.log(`${signal} recibido. Cerrando servidor...`);
+    stopChatTimers();
+    hub.closeAll(); // las conexiones de tiempo real impedirían cerrar el servidor
     server.close(() => {
       prisma.$disconnect().finally(() => process.exit(0));
     });
