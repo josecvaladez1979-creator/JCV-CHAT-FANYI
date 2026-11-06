@@ -1,30 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Hash,
   ShieldCheck,
-  ShieldAlert,
-  Users,
   Menu,
   Key,
   Sparkles,
-  Lock,
-  Info,
   Phone,
   Video,
-  AlertTriangle,
   Link2,
   Check,
-  Briefcase,
 } from 'lucide-react';
 import { Message, Channel, User, LanguageCode } from '../types';
 import { MessageItem } from './MessageItem';
 import { MessageComposer } from './MessageComposer';
 import { decryptE2EE, encryptE2EE } from '../utils/crypto';
 import { api } from '../services/api';
-import { checkQuotaStatus, incrementTranslationQuota, normalizePlan } from '../utils/quota';
 import { QuotaExhaustedModal } from './QuotaExhaustedModal';
 import { t } from '../jcv-world.js';
-import { PLAN_FREEMIUM, tienePackPagado } from '../plans.js';
 
 interface ChatAreaProps {
   channel: Channel | undefined;
@@ -53,6 +45,15 @@ interface ChatAreaProps {
   onOpenB2B?: () => void;
 }
 
+type WalletView = {
+  balanceCents: number;
+  expiresAt: string | null;
+  daysLeft: number;
+};
+
+const mxn = (cents: number) =>
+  (cents / 100).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+
 export const ChatArea: React.FC<ChatAreaProps> = ({
   channel,
   messages,
@@ -69,7 +70,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onStartVoiceCall,
   onStartVideoCall,
   onOpenSubscription,
-  onOpenB2B,
 }) => {
   const [decryptedMap, setDecryptedMap] = useState<Record<string, string>>({});
   const [decryptionErrors, setDecryptionErrors] = useState<Record<string, boolean>>({});
@@ -77,11 +77,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Quota status state
-  const userPlan = normalizePlan(currentUser?.subscriptionPlan);
-  const [quotaStatus, setQuotaStatus] = useState(() => checkQuotaStatus(userPlan));
-  const [showQuotaModal, setShowQuotaModal] = useState(false);
+  // Saldo para traducir. El navegador solo lo MUESTRA y lo usa como pista:
+  // quien decide si se traduce (y cuánto se cobra) es el servidor.
+  const [wallet, setWallet] = useState<WalletView | null>(null);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const promptedRef = useRef(false);
   const [copiedJoinLink, setCopiedJoinLink] = useState(false);
+
+  const refreshWallet = useCallback(async () => {
+    if (!currentUser) {
+      setWallet(null);
+      return;
+    }
+    try {
+      const w = await api.getWallet();
+      setWallet({
+        balanceCents: w.balanceCents,
+        expiresAt: w.expiresAt,
+        daysLeft: w.daysLeft,
+      });
+    } catch {
+      // Si no se puede consultar el saldo, el chat sigue funcionando.
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    refreshWallet();
+  }, [refreshWallet]);
 
   const handleCopyJoinLink = () => {
     if (!channel) return;
@@ -90,10 +112,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setCopiedJoinLink(true);
     setTimeout(() => setCopiedJoinLink(false), 2000);
   };
-
-  useEffect(() => {
-    setQuotaStatus(checkQuotaStatus(userPlan));
-  }, [messages.length, userPlan]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -163,28 +181,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       }
     }
 
+    // Chatear en tu mismo idioma es gratis y NUNCA se bloquea. Solo la
+    // traducción con IA se cobra del saldo. Si ya sabemos que no hay saldo,
+    // se envía sin traducir (pista; el servidor vuelve a comprobarlo).
     let shouldSkipTranslation = false;
 
-    // Translation logic:
-    // REGLA DE ORO: JCV CHAT nunca está sujeto a plan. Es gratis de por vida.
-    // El chat normal siempre funciona 100% libre. Solo la traducción IA se activa con planes o packs.
     if (!params.isE2EE && params.text.trim().length > 0) {
-      if (quotaStatus.isExhausted || (!tienePackPagado() && quotaStatus.limit === 0)) {
-        // NO BLOQUEES NADA - Solo desactiva traducción. El chat sigue 100% activo.
+      if (wallet !== null && wallet.balanceCents <= 0) {
         shouldSkipTranslation = true;
         (window as any).traduccionActiva = false;
-      } else {
-        const updated = incrementTranslationQuota(userPlan);
-        setQuotaStatus(updated);
+
+        // Se explica una sola vez por sesión por qué no se tradujo.
+        if (!promptedRef.current) {
+          promptedRef.current = true;
+          setShowBalanceModal(true);
+        }
       }
     }
 
     await onSendMessage({
       ...params,
+      // Un mensaje cifrado sale SIN su texto en claro: solo viaja el cifrado.
+      text: params.isE2EE ? '' : params.text,
       encryptedPayload,
       skipTranslation: shouldSkipTranslation,
     });
+
+    refreshWallet();
   };
+
+  const lowBalance = wallet !== null && wallet.balanceCents <= 0;
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-slate-950 overflow-hidden">
@@ -221,18 +247,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
         {/* Right header actions */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Quota Tracker Badge */}
-          <button
-            onClick={() => setShowQuotaModal(true)}
-            className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-xl border transition-colors cursor-pointer bg-[#0a1a0a] text-[#00ff88] border-[#00ff88]/40 hover:border-[#00ff88]"
-            title={`Traducción IA: ${quotaStatus.used}/${quotaStatus.limit} (Haz clic para comprar traducción)`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[#00ff88]" />
-            <span>Traducción IA:</span>
-            <strong className="text-[#00ff88]">
-              {quotaStatus.used}/{quotaStatus.limit}
-            </strong>
-          </button>
+          {/* Saldo para traducir */}
+          {currentUser && (
+            <button
+              onClick={() => {
+                refreshWallet();
+                setShowBalanceModal(true);
+              }}
+              className={`hidden sm:flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-xl border transition-colors cursor-pointer ${
+                lowBalance
+                  ? 'bg-amber-950/40 text-amber-300 border-amber-500/40 hover:border-amber-400'
+                  : 'bg-[#0a1a0a] text-[#00ff88] border-[#00ff88]/40 hover:border-[#00ff88]'
+              }`}
+              title="Tu saldo para traducir con IA. Haz clic para ver o recargar."
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Saldo:</span>
+              <strong>{wallet ? mxn(wallet.balanceCents) : '—'}</strong>
+              {wallet && wallet.balanceCents > 0 && wallet.expiresAt && (
+                <span className="text-slate-400">· {wallet.daysLeft} d</span>
+              )}
+            </button>
+          )}
 
           {/* Call Voice Button with data-i18n and persistent startCall */}
           <button
@@ -295,17 +331,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       </div>
 
-      {/* ANUNCIO DESACTIVADO - JCV CHAT ES GRATIS PARA SIEMPRE */}
-      {/* Sin banners en medio: estilo limpio WhatsApp */}
-
-      {/* Quota Exhausted Modal */}
+      {/* Aviso de saldo */}
       <QuotaExhaustedModal
-        isOpen={showQuotaModal}
-        onClose={() => setShowQuotaModal(false)}
-        planId={userPlan}
-        quotaStatus={quotaStatus}
-        onUpgradePlan={onOpenSubscription || (() => {})}
-        onUpgradeToB2B={onOpenB2B || (() => {})}
+        isOpen={showBalanceModal}
+        onClose={() => setShowBalanceModal(false)}
+        balanceCents={wallet?.balanceCents ?? 0}
+        expiresAt={wallet?.expiresAt ?? null}
+        onRecharge={onOpenSubscription || (() => {})}
       />
 
       {/* Message Stream */}
@@ -319,12 +351,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             Bienvenido al canal #{channel?.name}
           </h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Escribe en tu idioma natal. La IA gratuita <strong className="text-indigo-300">Qwen3-32B</strong> en SiliconFlow traducirá cada mensaje al idioma nativo de cada usuario con un 99% de precisión en tiempo real.
+            Escribe en tu idioma. Chatear en el mismo idioma es gratis. Con saldo, la IA traduce cada mensaje al idioma de quien lo lee.
           </p>
           {channel?.isE2EE && (
             <div className="mt-2 text-[11px] text-emerald-400 flex items-center justify-center gap-1.5 font-medium">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Esta sala cuenta con Cifrado de Extremo a Extremo AES-256 habilitado.</span>
+              <span>Esta sala tiene el cifrado de extremo a extremo habilitado.</span>
             </div>
           )}
         </div>
