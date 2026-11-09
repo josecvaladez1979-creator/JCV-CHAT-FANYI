@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
@@ -8,14 +8,29 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuthModal } from './components/AuthModal';
 import { AudioVoiceModal } from './components/AudioVoiceModal';
 import { CallModal, ActiveCall } from './components/CallModal';
-import { VaultView } from './components/VaultView';
 import { LegalTermsModal } from './components/LegalTermsModal';
 import { User, Channel, Message, LanguageCode } from './types';
 import { api } from './services/api';
 import { realtimeChat } from './services/sse';
 import { playNotificationSound } from './utils/audio';
 
+// Las llamadas y videollamadas aún no tienen servidor. Mientras sea false no se
+// abre una llamada que nunca conectaría. El código se conserva para cuando existan.
+const CALLS_ENABLED = false;
+
+// Clave aleatoria fuerte para un canal cifrado (antes: 6 caracteres de Math.random).
+function generatePassphrase(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
 export default function App() {
+  // El perfil guardado solo sirve para pintar rápido: la sesión real se verifica
+  // con el servidor al abrir (ver más abajo).
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('jcv_user');
     if (saved) {
@@ -34,18 +49,15 @@ export default function App() {
 
   const [users, setUsers] = useState<User[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [activeChannelId, setActiveChannelId] = useState<string>('chan-general');
+  const [activeChannelId, setActiveChannelId] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{ userId: string; userName: string }[]>([]);
 
-  // App Mode: 'vault' (Enterprise B2B Document Translation & Ephemeral Vault) or 'chat' (Real-time Communications Suite)
-  const [appMode, setAppMode] = useState<'vault' | 'chat'>('vault');
-
   // WebRTC Active Call state
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
 
-  // Passphrases map for E2EE channels (stored in localStorage)
+  // Claves de los canales cifrados. Viven solo en este dispositivo.
   const [channelPassphrases, setChannelPassphrases] = useState<Record<string, string>>(() => {
     const saved = localStorage.getItem('jcv_e2ee_passphrases');
     if (saved) {
@@ -55,14 +67,11 @@ export default function App() {
         // ignore
       }
     }
-    return {
-      'chan-e2ee-secure': 'jcv-e2ee-fanyi-secret-2026',
-    };
+    return {};
   });
 
-  // SiliconFlow and model state
   const [siliconFlowStatus, setSiliconFlowStatus] = useState<any>(null);
-  const [selectedModel, setSelectedModel] = useState<string>('Qwen/Qwen3-32B-Instruct');
+  const [selectedModel, setSelectedModel] = useState<string>('default');
 
   // Modal open states
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -74,35 +83,7 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [existingCallStream, setExistingCallStream] = useState<MediaStream | null>(null);
 
-  // Sync /join/{ROOM_ID} from URL
-  useEffect(() => {
-    const path = window.location.pathname;
-    const match = path.match(/\/join\/([^/]+)/);
-    if (match && match[1]) {
-      const rawRoom = decodeURIComponent(match[1]).trim();
-      if (rawRoom) {
-        const found = channels.find((c) => c.id === rawRoom || c.id === `chan-${rawRoom}` || c.name === rawRoom);
-        if (found) {
-          setActiveChannelId(found.id);
-        } else if (channels.length > 0) {
-          const newChan: Channel = {
-            id: `chan-${rawRoom}`,
-            name: rawRoom,
-            description: `Sala compartida /join/${rawRoom}`,
-            isPrivate: false,
-            isE2EE: true,
-          };
-          setChannels((prev) => [...prev, newChan]);
-          setActiveChannelId(newChan.id);
-        }
-      }
-    }
-  }, [channels]);
-
-  // Hide banner permanently
-  useEffect(() => {
-    localStorage.setItem('jcv_hide_banner', 'true');
-  }, []);
+  const lastTypingRef = useRef(0);
 
   // Sync current user to localStorage
   useEffect(() => {
@@ -118,60 +99,117 @@ export default function App() {
     localStorage.setItem('jcv_e2ee_passphrases', JSON.stringify(channelPassphrases));
   }, [channelPassphrases]);
 
-  // Initial data loading
+  // 1) Verificar la sesión con el servidor al abrir la app.
   useEffect(() => {
-    const initApp = async () => {
+    let cancelled = false;
+
+    (async () => {
       try {
-        // Fetch SiliconFlow status
-        const sfStatus = await api.getSiliconFlowStatus();
-        setSiliconFlowStatus(sfStatus);
-
-        // Fetch users
-        const fetchedUsers = await api.getUsers();
-        setUsers(fetchedUsers);
-
-        // If no current user, default to José Carlos (Admin & Founder)
-        if (!currentUser && fetchedUsers.length > 0) {
-          const defaultUser = fetchedUsers[0];
-          setCurrentUser(defaultUser);
-          setSelectedLanguage(defaultUser.preferredLanguage);
+        const me = await api.getMe();
+        if (cancelled) return;
+        setCurrentUser(me);
+        setSelectedLanguage((me.preferredLanguage as LanguageCode) || 'es');
+      } catch (err: any) {
+        if (cancelled) return;
+        // Solo se cierra la sesión si el servidor dice que no hay una válida.
+        // Si fue un problema de red, se conserva lo que había.
+        if (err?.status === 401) {
+          setCurrentUser(null);
+          setIsAuthOpen(true);
         }
-
-        // Fetch channels
-        const fetchedChannels = await api.getChannels();
-        setChannels(fetchedChannels);
-        if (fetchedChannels.length > 0 && !activeChannelId) {
-          setActiveChannelId(fetchedChannels[0].id);
-        }
-      } catch (err) {
-        console.error('App init error:', err);
       }
-    };
+    })();
 
-    initApp();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Fetch messages when active channel changes
+  // 2) Con sesión: cargar personas y canales, y entrar al canal del enlace /join/...
   useEffect(() => {
-    if (!activeChannelId) return;
+    if (!currentUser?.id) return;
+    let cancelled = false;
 
-    const fetchChannelMessages = async () => {
+    (async () => {
+      try {
+        setSiliconFlowStatus(await api.getSiliconFlowStatus());
+      } catch (e) {
+        // informativo
+      }
+
+      try {
+        const peers = await api.getUsers();
+        if (!cancelled) setUsers(peers);
+      } catch (e) {
+        // el chat funciona sin la lista
+      }
+
+      try {
+        let list: Channel[] = await api.getChannels();
+        let joinedId: string | null = null;
+
+        const match = window.location.pathname.match(/\/join\/([^/]+)/);
+        if (match && match[1]) {
+          try {
+            const joined: Channel = await api.joinChannel(decodeURIComponent(match[1]).trim());
+            joinedId = joined.id;
+            if (!list.some((c) => c.id === joined.id)) list = [...list, joined];
+            window.history.replaceState(null, '', '/');
+          } catch (e) {
+            console.error('No se pudo entrar al canal del enlace:', e);
+          }
+        }
+
+        if (cancelled) return;
+        setChannels(list);
+        setActiveChannelId((prev) => {
+          if (joinedId) return joinedId;
+          if (prev && list.some((c) => c.id === prev)) return prev;
+          return list[0]?.id ?? '';
+        });
+      } catch (err) {
+        console.error('Error cargando los canales:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  // 3) Mensajes del canal activo.
+  useEffect(() => {
+    if (!currentUser?.id || !activeChannelId) return;
+    let cancelled = false;
+
+    setMessages([]);
+    setTypingUsers([]);
+
+    (async () => {
       try {
         const msgs = await api.getMessages(activeChannelId);
-        setMessages(msgs);
+        if (!cancelled) setMessages(msgs);
       } catch (err) {
-        console.error('Error fetching messages for channel:', err);
+        console.error('Error cargando los mensajes:', err);
       }
+    })();
+
+    return () => {
+      cancelled = true;
     };
+  }, [activeChannelId, currentUser?.id]);
 
-    fetchChannelMessages();
-  }, [activeChannelId]);
-
-  // Setup Real-time SSE Connection
+  // 4) Conexión en tiempo real: solo con sesión.
   useEffect(() => {
-    realtimeChat.connect();
+    if (currentUser?.id) {
+      realtimeChat.connect();
+    } else {
+      realtimeChat.disconnect();
+    }
+  }, [currentUser?.id]);
 
-    // Listen to new messages
+  // 5) Eventos en tiempo real.
+  useEffect(() => {
     const unsubNewMsg = realtimeChat.on('new_message', (newMsg: Message) => {
       if (newMsg.channelId === activeChannelId) {
         setMessages((prev) => {
@@ -185,64 +223,55 @@ export default function App() {
       }
     });
 
-    // Listen to background translations
-    const unsubMsgTrans = realtimeChat.on('message_translated', (data: { messageId: string; translations: Record<string, string> }) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === data.messageId) {
-            return {
-              ...m,
-              translations: {
-                ...(m.translations || {}),
-                ...data.translations,
-              },
-            };
-          }
-          return m;
-        })
-      );
-    });
-
-    // Listen to message reactions
-    const unsubReaction = realtimeChat.on('message_reaction', (data: { messageId: string; reactions: Record<string, string[]> }) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === data.messageId) {
-            return { ...m, reactions: data.reactions };
-          }
-          return m;
-        })
-      );
-    });
-
-    // Listen to typing indicators
-    const unsubTyping = realtimeChat.on('typing', (data: { channelId: string; userId: string; userName: string; isTyping: boolean }) => {
-      if (data.channelId === activeChannelId && currentUser && data.userId !== currentUser.id) {
-        setTypingUsers((prev) => {
-          if (data.isTyping) {
-            if (prev.some((u) => u.userId === data.userId)) return prev;
-            return [...prev, { userId: data.userId, userName: data.userName }];
-          } else {
-            return prev.filter((u) => u.userId !== data.userId);
-          }
-        });
+    const unsubMsgTrans = realtimeChat.on(
+      'message_translated',
+      (data: { messageId: string; translations: Record<string, string> }) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === data.messageId
+              ? { ...m, translations: { ...(m.translations || {}), ...data.translations } }
+              : m
+          )
+        );
       }
-    });
+    );
 
-    // Listen to WebRTC signaling for calls
+    const unsubReaction = realtimeChat.on(
+      'message_reaction',
+      (data: { messageId: string; reactions: Record<string, string[]> }) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === data.messageId ? { ...m, reactions: data.reactions } : m))
+        );
+      }
+    );
+
+    const unsubTyping = realtimeChat.on(
+      'typing',
+      (data: { channelId: string; userId: string; userName: string; isTyping: boolean }) => {
+        if (data.channelId === activeChannelId && currentUser && data.userId !== currentUser.id) {
+          setTypingUsers((prev) => {
+            if (data.isTyping) {
+              if (prev.some((u) => u.userId === data.userId)) return prev;
+              return [...prev, { userId: data.userId, userName: data.userName }];
+            }
+            return prev.filter((u) => u.userId !== data.userId);
+          });
+        }
+      }
+    );
+
     const unsubWebRTC = realtimeChat.on('webrtc_signal', (signal: any) => {
-      if (!currentUser || signal.senderId === currentUser.id) {
+      if (!CALLS_ENABLED || !currentUser || signal.senderId === currentUser.id) {
         return;
       }
 
       if (signal.signalType === 'call_request') {
-        // Incoming call received
         playNotificationSound('receive');
         setActiveCall((prev) => {
-          if (prev) return prev; // already in call
+          if (prev) return prev;
           return {
             channelId: signal.channelId,
-            channelName: channels.find((c) => c.id === signal.channelId)?.name || 'Llamada E2EE',
+            channelName: channels.find((c) => c.id === signal.channelId)?.name || 'Llamada',
             callType: signal.callType || 'voice',
             isCaller: false,
             status: 'incoming',
@@ -260,7 +289,6 @@ export default function App() {
       }
     });
 
-    // Listen to newly created channels
     const unsubNewChan = realtimeChat.on('channel_created', (newChan: Channel) => {
       setChannels((prev) => {
         if (prev.some((c) => c.id === newChan.id)) return prev;
@@ -268,7 +296,6 @@ export default function App() {
       });
     });
 
-    // Listen to user status & updates
     const unsubUserUpdated = realtimeChat.on('user_updated', (updatedUser: User) => {
       setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
       if (currentUser && currentUser.id === updatedUser.id) {
@@ -287,10 +314,16 @@ export default function App() {
     };
   }, [activeChannelId, currentUser, channels]);
 
-  // Handle start WebRTC Call (Voice or Video)
+  // ---------------- Llamadas (apagadas hasta que exista su servidor) ----------------
+
   const handleStartCall = async (type: 'voice' | 'video', targetUser?: User, stream?: MediaStream) => {
     if (!currentUser) {
       setIsAuthOpen(true);
+      return;
+    }
+
+    if (!CALLS_ENABLED) {
+      alert('Las llamadas y videollamadas estarán disponibles pronto.');
       return;
     }
 
@@ -299,12 +332,12 @@ export default function App() {
     }
 
     const channel = channels.find((c) => c.id === activeChannelId) || channels[0];
-    const callName = targetUser ? targetUser.name : channel?.name || 'general-fānyì';
+    const callName = targetUser ? targetUser.name : channel?.name || 'Llamada';
 
     playNotificationSound('send');
 
     setActiveCall({
-      channelId: channel?.id || 'chan-general',
+      channelId: channel?.id || '',
       channelName: callName,
       callType: type,
       isCaller: true,
@@ -317,50 +350,51 @@ export default function App() {
       targetUser,
     });
 
-    // Broadcast call request to peers
-    await api.sendWebRTCSignal({
-      channelId: channel?.id || 'chan-general',
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      targetUserId: targetUser?.id,
-      signalType: 'call_request',
-      callType: type,
-      e2ee: true,
-    });
+    try {
+      await api.sendWebRTCSignal({
+        channelId: channel?.id || '',
+        targetUserId: targetUser?.id,
+        signalType: 'call_request',
+        callType: type,
+        e2ee: true,
+      });
+    } catch (err) {
+      console.error('No se pudo iniciar la llamada:', err);
+      setActiveCall(null);
+    }
   };
 
-  // Accept incoming call
   const handleAcceptCall = async () => {
     if (!activeCall || !currentUser) return;
     setActiveCall((prev) => (prev ? { ...prev, status: 'connected' } : null));
 
-    await api.sendWebRTCSignal({
-      channelId: activeCall.channelId,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      senderAvatar: currentUser.avatar,
-      signalType: 'call_accepted',
-      callType: activeCall.callType,
-    });
-  };
-
-  // End active call
-  const handleEndCall = async () => {
-    if (activeCall && currentUser) {
+    try {
       await api.sendWebRTCSignal({
         channelId: activeCall.channelId,
-        senderId: currentUser.id,
-        senderName: currentUser.name,
-        senderAvatar: currentUser.avatar,
-        signalType: 'call_ended',
+        signalType: 'call_accepted',
         callType: activeCall.callType,
       });
+    } catch (err) {
+      console.error('No se pudo aceptar la llamada:', err);
+    }
+  };
+
+  const handleEndCall = async () => {
+    if (activeCall && currentUser) {
+      try {
+        await api.sendWebRTCSignal({
+          channelId: activeCall.channelId,
+          signalType: 'call_ended',
+          callType: activeCall.callType,
+        });
+      } catch (err) {
+        // la llamada se cierra de todos modos
+      }
     }
     setActiveCall(null);
   };
 
-  // Connect global window handlers for jcv-world.js (persistent call connecting without prompt)
+  // Manejadores globales para jcv-world.js
   useEffect(() => {
     (window as any).onJcvConnectToRoom = (stream: MediaStream, isVideo: boolean) => {
       handleStartCall(isVideo ? 'video' : 'voice', undefined, stream);
@@ -370,7 +404,9 @@ export default function App() {
     };
   }, [activeChannelId, currentUser, channels]);
 
-  // Handle send message
+  // ---------------- Mensajes ----------------
+
+  // Quién envía lo decide el servidor con la sesión; aquí solo va el contenido.
   const handleSendMessage = async (params: {
     text: string;
     isE2EE: boolean;
@@ -384,20 +420,16 @@ export default function App() {
     setIsSending(true);
 
     try {
-      await api.sendMessage({
+      const sent = await api.sendMessage({
         channelId: activeChannelId,
-        senderId: currentUser.id,
-        senderName: currentUser.name,
-        senderAvatar: currentUser.avatar,
-        senderLanguage: currentUser.preferredLanguage,
         text: params.text,
         isE2EE: params.isE2EE,
         encryptedPayload: params.encryptedPayload,
         isAudio: params.isAudio,
         audioBase64: params.audioBase64,
         audioDuration: params.audioDuration,
-                skipTranslation: params.skipTranslation,
       });
+
       if (sent && sent.id) {
         setMessages((prev) => (prev.some((m) => m.id === sent.id) ? prev : [...prev, sent]));
       }
@@ -409,44 +441,35 @@ export default function App() {
     }
   };
 
-  // Handle typing event
+  // "Está escribiendo": máximo un aviso cada 3 segundos.
   const handleTyping = (isTyping: boolean) => {
-    if (currentUser && activeChannelId) {
-      api.sendTyping(activeChannelId, currentUser.id, currentUser.name, isTyping);
-    }
+    if (!currentUser || !activeChannelId) return;
+
+    const now = Date.now();
+    if (isTyping && now - lastTypingRef.current < 3000) return;
+    lastTypingRef.current = isTyping ? now : 0;
+
+    api.sendTyping(activeChannelId, isTyping).catch(() => {});
   };
 
-  // Handle emoji reaction
   const handleReaction = async (messageId: string, emoji: string) => {
     if (!currentUser) return;
     try {
-      const reactions = await api.toggleReaction(messageId, emoji, currentUser.id);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, reactions } : m))
-      );
+      const reactions = await api.toggleReaction(messageId, emoji);
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, reactions } : m)));
     } catch (err) {
       console.error('Reaction error:', err);
     }
   };
 
-  // Quick switch user persona
-  const handleSwitchUser = (user: User) => {
-    setCurrentUser(user);
-    setSelectedLanguage(user.preferredLanguage);
-  };
-
-  // Create new channel
   const handleCreateChannel = async (name: string, description: string, isE2EE: boolean) => {
     try {
-      const newChan = await api.createChannel(name, description, isE2EE);
-      setChannels((prev) => [...prev, newChan]);
+      const newChan: Channel = await api.createChannel(name, description, isE2EE);
+      setChannels((prev) => (prev.some((c) => c.id === newChan.id) ? prev : [...prev, newChan]));
       setActiveChannelId(newChan.id);
 
       if (isE2EE) {
-        setChannelPassphrases((prev) => ({
-          ...prev,
-          [newChan.id]: 'jcv-e2ee-key-' + Math.random().toString(36).substring(2, 8),
-        }));
+        setChannelPassphrases((prev) => ({ ...prev, [newChan.id]: generatePassphrase() }));
       }
     } catch (err: any) {
       console.error('Error creating channel:', err);
@@ -454,78 +477,78 @@ export default function App() {
     }
   };
 
+  // Cierra la sesión también en el servidor.
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (e) {
+      // se cierra localmente de todos modos
+    }
+    realtimeChat.disconnect();
+    setCurrentUser(null);
+    setMessages([]);
+    setChannels([]);
+    setUsers([]);
+    setActiveChannelId('');
+    setIsAuthOpen(true);
+  };
+
   const activeChannel = channels.find((c) => c.id === activeChannelId) || channels[0];
   const activePassphrase = activeChannel ? channelPassphrases[activeChannel.id] || '' : '';
 
   return (
     <div className="min-h-screen bg-[#09090b] text-[#f8fafc] flex flex-col font-sans select-none">
-      {appMode === 'vault' ? (
-        /* JCV FĀNYÌ VAULT - Enterprise B2B Document Translation & Ephemeral Vault */
-        <VaultView
-          onSwitchToChat={() => setAppMode('chat')}
-          onOpenLegal={() => setIsLegalTermsOpen(true)}
+      <Navbar
+        currentUser={currentUser}
+        selectedLanguage={selectedLanguage}
+        onLanguageChange={setSelectedLanguage}
+        activeChannelName={activeChannel?.name || 'general-fānyì'}
+        isE2EEEnabled={Boolean(activeChannel?.isE2EE)}
+        onStartVoiceCall={() => handleStartCall('voice')}
+        onStartVideoCall={() => handleStartCall('video')}
+        onOpenE2EESettings={() => setIsE2EESettingsOpen(true)}
+        onOpenSubscription={() => setIsSubscriptionOpen(true)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onLogout={handleLogout}
+        onOpenLegal={() => setIsLegalTermsOpen(true)}
+      />
+
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          channels={channels}
+          activeChannelId={activeChannelId}
+          onSelectChannel={setActiveChannelId}
+          users={users}
+          currentUser={currentUser}
+          onSwitchUser={() => {
+            /* Cambiar de persona ya no existe: cada quien entra con su cuenta. */
+          }}
+          onCreateChannel={handleCreateChannel}
+          isMobileOpen={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          onCallUser={(u, type) => handleStartCall(type, u)}
         />
-      ) : (
-        /* Real-time Communications Suite */
-        <>
-          {/* Clean & Minimalist Navbar */}
-          <Navbar
-            currentUser={currentUser}
-            selectedLanguage={selectedLanguage}
-            onLanguageChange={setSelectedLanguage}
-            activeChannelName={activeChannel?.name || 'general-fānyì'}
-            isE2EEEnabled={Boolean(activeChannel?.isE2EE)}
-            onStartVoiceCall={() => handleStartCall('voice')}
-            onStartVideoCall={() => handleStartCall('video')}
-            onOpenE2EESettings={() => setIsE2EESettingsOpen(true)}
-            onOpenSubscription={() => setIsSubscriptionOpen(true)}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenAuth={() => setIsAuthOpen(true)}
-            onLogout={() => setCurrentUser(null)}
-            onSwitchToVault={() => setAppMode('vault')}
-            onOpenLegal={() => setIsLegalTermsOpen(true)}
-          />
 
-          {/* Main App Layout */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Left Sidebar */}
-            <Sidebar
-              channels={channels}
-              activeChannelId={activeChannelId}
-              onSelectChannel={setActiveChannelId}
-              users={users}
-              currentUser={currentUser}
-              onSwitchUser={handleSwitchUser}
-              onCreateChannel={handleCreateChannel}
-              isMobileOpen={isMobileSidebarOpen}
-              onCloseMobile={() => setIsMobileSidebarOpen(false)}
-              onCallUser={(u, type) => handleStartCall(type, u)}
-            />
+        <ChatArea
+          channel={activeChannel}
+          messages={messages}
+          currentUser={currentUser}
+          viewerLanguage={selectedLanguage}
+          onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+          onOpenE2EESettings={() => setIsE2EESettingsOpen(true)}
+          channelPassphrase={activePassphrase}
+          isSending={isSending}
+          onSendMessage={handleSendMessage}
+          typingUsers={typingUsers}
+          onTyping={handleTyping}
+          onReaction={handleReaction}
+          onStartVoiceCall={() => handleStartCall('voice')}
+          onStartVideoCall={() => handleStartCall('video')}
+          onOpenSubscription={() => setIsSubscriptionOpen(true)}
+        />
+      </div>
 
-            {/* Center Chat Area */}
-            <ChatArea
-              channel={activeChannel}
-              messages={messages}
-              currentUser={currentUser}
-              viewerLanguage={selectedLanguage}
-              onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
-              onOpenE2EESettings={() => setIsE2EESettingsOpen(true)}
-              channelPassphrase={activePassphrase}
-              isSending={isSending}
-              onSendMessage={handleSendMessage}
-              typingUsers={typingUsers}
-              onTyping={handleTyping}
-              onReaction={handleReaction}
-              onStartVoiceCall={() => handleStartCall('voice')}
-              onStartVideoCall={() => handleStartCall('video')}
-              onOpenSubscription={() => setIsSubscriptionOpen(true)}
-              onOpenB2B={() => setAppMode('vault')}
-            />
-          </div>
-        </>
-      )}
-
-      {/* WebRTC Voice & Video Call Overlay / Floating PiP */}
       <CallModal
         activeCall={activeCall}
         currentUser={currentUser}
@@ -535,26 +558,16 @@ export default function App() {
         onAcceptIncomingCall={handleAcceptCall}
       />
 
-      {/* Pestaña Planes: B2C Pack 10 & B2B Bóveda Pack 10 */}
       <Planes
         isOpen={isSubscriptionOpen}
         onClose={() => setIsSubscriptionOpen(false)}
         currentUser={currentUser}
-        onOpenB2B={() => {
-          setIsSubscriptionOpen(false);
-          setAppMode('vault');
-        }}
         onOpenLegal={() => {
           setIsSubscriptionOpen(false);
           setIsLegalTermsOpen(true);
         }}
-        onSubscriptionUpdated={(updatedUser) => {
-          setCurrentUser(updatedUser);
-          setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-        }}
       />
 
-      {/* E2EE Passphrase & Safety Numbers Modal */}
       <E2EESettingsModal
         isOpen={isE2EESettingsOpen}
         onClose={() => setIsE2EESettingsOpen(false)}
@@ -570,7 +583,6 @@ export default function App() {
         }}
       />
 
-      {/* SiliconFlow Qwen Settings & Sandbox Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -580,7 +592,6 @@ export default function App() {
         onOpenLegal={() => setIsLegalTermsOpen(true)}
       />
 
-      {/* Walkie-Talkie Simultaneous Voice Translation Modal */}
       <AudioVoiceModal
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
@@ -596,22 +607,17 @@ export default function App() {
         }}
       />
 
-      {/* Auth / Login Modal */}
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
-        availableUsers={users}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
-          setSelectedLanguage(user.preferredLanguage);
+          setSelectedLanguage((user.preferredLanguage as LanguageCode) || 'es');
         }}
       />
 
-      {/* Blindaje Legal & Prevención de Demandas (TyC 4 Cláusulas) */}
-      <LegalTermsModal
-        isOpen={isLegalTermsOpen}
-        onClose={() => setIsLegalTermsOpen(false)}
-      />
+      {/* NOTA: el final de este archivo se reconstruyó; compáralo con el tuyo. */}
+      <LegalTermsModal isOpen={isLegalTermsOpen} onClose={() => setIsLegalTermsOpen(false)} />
     </div>
   );
 }

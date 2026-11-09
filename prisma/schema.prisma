@@ -17,12 +17,8 @@ enum Role {
   ORG_MEMBER
 }
 
-enum B2CPlanId {
-  B2C_15D
-  B2C_1M
-  B2C_1Y
-}
-
+// Planes empresariales vigentes. Los antiguos B2B_15D / B2B_1M / B2B_1Y
+// y todos los B2C_* fueron retirados.
 enum B2BPlanId {
   BASIC
   PROFESSIONAL
@@ -30,6 +26,7 @@ enum B2BPlanId {
 }
 
 enum SubscriptionStatus {
+  PENDING
   ACTIVE
   PAST_DUE
   CANCELED
@@ -44,8 +41,8 @@ enum PaymentProvider {
 }
 
 enum InvoiceStatus {
-  PAID
   PENDING
+  PAID
   REFUNDED
   FAILED
 }
@@ -54,7 +51,24 @@ enum MessageModule {
   FREEMIUM
   B2C
   B2B
-  VAULT
+}
+
+enum CreditTxType {
+  TOPUP
+  USAGE
+  REFUND
+  ADJUSTMENT
+  EXPIRY
+}
+
+enum UsageFeature {
+  TEXT_TRANSLATION
+  AUDIO
+  AUDIO_TRANSLATION
+  VOICE_CALL
+  VOICE_CALL_TRANSLATION
+  VIDEO_CALL
+  VIDEO_CALL_TRANSLATION
 }
 
 // ═══════════════════════════════════════════════
@@ -62,45 +76,44 @@ enum MessageModule {
 // ═══════════════════════════════════════════════
 
 model User {
-  id                String           @id @default(cuid())
-  email             String           @unique
+  id                String         @id @default(cuid())
+  email             String         @unique
   passwordHash      String
   name              String
   avatar            String?
-  preferredLanguage String           @default("es")
-  role              Role             @default(USER)
+  preferredLanguage String         @default("es")
+  role              Role           @default(USER)
   orgId             String?
-  org               Organization?    @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  org               Organization?  @relation(fields: [orgId], references: [id], onDelete: SetNull)
 
   // Autenticación
   refreshTokens     RefreshToken[]
 
-  // Suscripciones (mutuamente excluyentes)
-  subscriptionB2C   SubscriptionB2C?
-  // Usuarios pueden tener B2B vía su org
-
-  // Freemium tracking
-  freemiumUsage     FreemiumUsage[]
+  // Saldo prepagado
+  wallet            Wallet?
 
   // Mensajes
   messages          Message[]
+  channelMemberships ChannelMember[]
+  reactionsGiven    MessageReaction[]
 
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   @@index([orgId])
   @@index([email])
 }
 
 model Organization {
-  id              String             @id @default(cuid())
+  id              String           @id @default(cuid())
   companyName     String
   rfc             String?
   members         User[]
   subscriptionB2B SubscriptionB2B?
+  wallet          Wallet?
   messages        Message[]
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model RefreshToken {
@@ -116,44 +129,45 @@ model RefreshToken {
 }
 
 // ═══════════════════════════════════════════════
-// FREEMIUM — Tracking diario por usuario
+// SALDO PREPAGADO (recargas de 100, 200, 500 y 1000 MXN)
+// Con vigencia: al vencer, lo no consumido se pierde (movimiento EXPIRY).
+// Importes siempre en CENTAVOS de MXN, como enteros.
 // ═══════════════════════════════════════════════
-model FreemiumUsage {
-  id             String   @id @default(cuid())
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  day            String   // formato "2026-10-05"
-  messagesUsed   Int      @default(0)
-  translationsUsed Int    @default(0)
+model Wallet {
+  id           String              @id @default(cuid())
+  userId       String?             @unique
+  user         User?               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orgId        String?             @unique
+  org          Organization?       @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  balanceCents Int                 @default(0)
+  expiresAt    DateTime?           // vencimiento del saldo; lo no consumido se pierde
+  currency     String              @default("MXN")
+  transactions CreditTransaction[]
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+}
 
-  @@unique([userId, day])
-  @@index([userId, day])
+// Libro de movimientos. Una fila por abono o cargo; no se edita ni se borra.
+// amountCents: positivo = abono, negativo = cargo.
+model CreditTransaction {
+  id                String        @id @default(cuid())
+  walletId          String
+  wallet            Wallet        @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  type              CreditTxType
+  amountCents       Int
+  balanceAfterCents Int
+  provider          String        // STRIPE | MERCADOPAGO | PAYPAL | INTERNAL
+  providerRef       String        // id externo o clave interna; evita acreditar dos veces
+  feature           UsageFeature?
+  metadata          Json?
+  createdAt         DateTime      @default(now())
+
+  @@unique([provider, providerRef])
+  @@index([walletId, createdAt])
 }
 
 // ═══════════════════════════════════════════════
-// B2C — Suscripciones individuales
-// ═══════════════════════════════════════════════
-model SubscriptionB2C {
-  id          String              @id @default(cuid())
-  userId      String              @unique
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan        B2CPlanId
-  provider    PaymentProvider
-  externalId  String?             @unique
-  status      SubscriptionStatus  @default(TRIAL)
-  autoRenew   Boolean             @default(true)
-  startsAt    DateTime            @default(now())
-  expiresAt   DateTime
-  invoices    Invoice[]
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-
-  @@index([userId])
-  @@index([externalId])
-}
-
-// ═══════════════════════════════════════════════
-// B2B — Suscripciones empresariales (por org)
+// B2B — Suscripciones empresariales (por organización)
 // ═══════════════════════════════════════════════
 model SubscriptionB2B {
   id          String              @id @default(cuid())
@@ -162,7 +176,7 @@ model SubscriptionB2B {
   plan        B2BPlanId
   provider    PaymentProvider
   externalId  String?             @unique
-  status      SubscriptionStatus  @default(TRIAL)
+  status      SubscriptionStatus  @default(PENDING)
   seats       Int                 @default(5)
   autoRenew   Boolean             @default(true)
   startsAt    DateTime            @default(now())
@@ -177,22 +191,24 @@ model SubscriptionB2B {
 
 // ═══════════════════════════════════════════════
 // INVOICES — Facturación
+// Nace PENDING: solo un webhook verificado puede marcarla PAID.
 // ═══════════════════════════════════════════════
 model Invoice {
-  id          String             @id @default(cuid())
-  amount      Int                // céntimos
-  currency    String             @default("usd")
+  id          String            @id @default(cuid())
+  amount      Int               // centavos
+  currency    String            @default("mxn")
   provider    PaymentProvider
   providerRef String?
-  status      InvoiceStatus      @default(PAID)
-  b2cId       String?
-  b2c         SubscriptionB2C?   @relation(fields: [b2cId], references: [id], onDelete: SetNull)
+  status      InvoiceStatus     @default(PENDING)
   b2bId       String?
-  b2b         SubscriptionB2B?   @relation(fields: [b2bId], references: [id], onDelete: SetNull)
-  createdAt   DateTime           @default(now())
+  b2b         SubscriptionB2B?  @relation(fields: [b2bId], references: [id], onDelete: SetNull)
+  orgId       String?           // trazabilidad contable sin depender de la suscripción
+  paidAt      DateTime?
+  createdAt   DateTime          @default(now())
 
-  @@index([b2cId])
+  @@unique([provider, providerRef])
   @@index([b2bId])
+  @@index([orgId])
 }
 
 // ═══════════════════════════════════════════════
@@ -217,7 +233,8 @@ model Message {
   audioBase64         String?        @db.Text
   aiModel             String?
   translationAccuracy String?
-  reactions           Json?          // { "👍": ["user1", "user2"] }
+  reactions           Json?          // en desuso: ahora se usa MessageReaction
+  reactionRecords     MessageReaction[]
   createdAt           DateTime       @default(now())
 
   @@index([channelId, createdAt])
@@ -234,7 +251,9 @@ model Channel {
   description     String?
   isPrivate       Boolean  @default(false)
   isE2EE          Boolean  @default(false)
-  e2eePassphrase  String?
+  e2eePassphrase  String?        // EN DESUSO: el servidor nunca debe guardar claves de cifrado
+  createdById     String?
+  members         ChannelMember[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -256,28 +275,116 @@ model WebhookEvent {
 }
 
 // ═══════════════════════════════════════════════
-// VAULT CERTIFICATES — Contratos B2B destruidos
+// CONTROL FISCAL — ventas y gastos para tu contador (SAT / RESICO)
+// Sin llaves foráneas a propósito: los registros fiscales no deben cambiar
+// ni borrarse si se elimina un usuario o una organización.
+// No calcula impuestos: solo conserva los datos que tu contador necesita.
 // ═══════════════════════════════════════════════
-model VaultCertificate {
-  id            String   @id @default(cuid())
-  documentName  String
-  destroyedAt   String
-  hash          String
-  shortHash     String
-  pages         Int
-  timerSelected String
-  packRemaining String
-  cfdiFolio     String
-  status        String   @default("PURGADO PERMANENTEMENTE")
-  createdAt     DateTime @default(now())
+enum SaleKind {
+  TOPUP
+  B2B_SUBSCRIPTION
+  CONTRACT_TRANSLATION
+  REFUND
+  OTHER
 }
 
+enum CfdiStatus {
+  PENDING
+  ISSUED
+  INCLUDED_IN_GLOBAL
+  CANCELED
+  NOT_APPLICABLE
+}
+
+enum ExpenseCategory {
+  HOSTING
+  DATABASE
+  AI
+  PAYMENT_FEES
+  DOMAIN
+  TOOLS
+  OTHER
+}
+
+model SaleRecord {
+  id                 String     @id @default(cuid())
+  kind               SaleKind
+  provider           String
+  providerRef        String
+  userId             String?
+  orgId              String?
+  customerName       String?
+  customerRfc        String?
+  customerEmail      String?
+  currency           String     @default("MXN")
+  netCents           Int        // subtotal sin IVA
+  ivaCents           Int        @default(0)
+  totalCents         Int        // lo que pagó el cliente (negativo en reembolsos)
+  gatewayFeeCents    Int?       // comisión de la pasarela, si se conoce
+  taxpayerRegistered Boolean    // si estabas registrado en el SAT al vender
+  paymentMethod      String?
+  paidAt             DateTime   // fecha de cobro efectivo
+  cfdiStatus         CfdiStatus
+  cfdiUuid           String?    @unique
+  cfdiFolio          String?
+  cfdiIssuedAt       DateTime?
+  globalInvoiceRef   String?
+  refundOfId         String?
+  metadata           Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([provider, providerRef])
+  @@index([paidAt])
+  @@index([cfdiStatus])
+}
+
+model ExpenseRecord {
+  id             String          @id @default(cuid())
+  spentAt        DateTime
+  supplier       String
+  concept        String
+  category       ExpenseCategory
+  currency       String          @default("MXN")
+  originalCents  Int?            // importe en la moneda original, si no es MXN
+  fxRate         Float?          // tipo de cambio usado
+  amountMxnCents Int
+  ivaCents       Int             @default(0)
+  hasCfdi        Boolean         @default(false)
+  cfdiUuid       String?
+  receiptNote    String?
+  createdBy      String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([spentAt])
+}
+
+
 // ═══════════════════════════════════════════════
-// PLAN CONFIG — Activar/desactivar planes desde admin
+// CHAT — miembros de canal y reacciones
 // ═══════════════════════════════════════════════
-model PlanConfig {
-  id        String    @id @default(cuid())
-  planId    String    @unique // "B2C_15D", "B2B_1M", etc.
-  active    Boolean   @default(true)
-  updatedAt DateTime  @updatedAt
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt  DateTime @default(now())
+
+  @@unique([channelId, userId])
+  @@index([userId])
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
 }
