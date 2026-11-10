@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Control fiscal — JCV CHAT FĀNYÌ</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; }
+    h1 { font-size: 1.15rem; } h2 { font-size: 1rem; margin-top: 1.4rem; }
+    input, select, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; }
+    button { cursor: pointer; background: #4f46e5; border-color: #4f46e5; }
+    button.secondary { background: #1e293b; border-color: #475569; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
+    th, td { border-bottom: 1px solid #334155; padding: 6px 8px; text-align: left; white-space: nowrap; }
+    .msg { margin: 8px 0; min-height: 1.2em; } .err { color: #fda4af; } .ok { color: #86efac; }
+    .note { font-size: 0.75rem; color: #94a3b8; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>Control fiscal</h1>
+  <p class="note">Datos de apoyo para tu contador. No son una declaración de impuestos.</p>
+  <div id="msg" class="msg" role="status"></div>
+
+  <section id="login" class="card">
+    <h2>Acceso de administrador</h2>
+    <div class="row">
+      <input id="email" type="email" placeholder="Correo" autocomplete="username" />
+      <input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" />
+      <button id="loginBtn" type="button">Entrar</button>
+    </div>
+  </section>
+
+  <section id="main" hidden>
+    <div class="row">
+      <input id="month" type="month" />
+      <button id="loadBtn" type="button">Ver mes</button>
+      <button id="salesCsv" type="button" class="secondary">CSV de ventas</button>
+      <button id="expensesCsv" type="button" class="secondary">CSV de gastos</button>
+      <button id="attentionBtn" type="button" class="secondary">Pagos por revisar</button>
+    </div>
+
+    <div class="card"><h2>Resumen</h2><div id="summary"></div></div>
+    <div class="card"><h2>Ventas</h2><div class="scroll"><table id="sales"></table></div></div>
+    <div class="card"><h2>Gastos</h2><div class="scroll"><table id="expenses"></table></div></div>
+    <div class="card"><h2>Pagos que requieren revisión</h2><div class="scroll"><table id="attention"></table></div></div>
+
+    <div class="card">
+      <h2>Registrar un gasto</h2>
+      <div class="row">
+        <input id="eDate" type="date" />
+        <input id="eSupplier" placeholder="Proveedor" maxlength="120" />
+        <input id="eConcept" placeholder="Concepto" maxlength="200" />
+        <select id="eCategory">
+          <option value="HOSTING">Hosting</option><option value="DATABASE">Base de datos</option>
+          <option value="AI">IA</option><option value="PAYMENT_FEES">Comisiones de pago</option>
+          <option value="DOMAIN">Dominio</option><option value="TOOLS">Herramientas</option>
+          <option value="OTHER">Otro</option>
+        </select>
+        <input id="eAmount" type="number" step="0.01" min="0" placeholder="Importe MXN" />
+        <input id="eIva" type="number" step="0.01" min="0" placeholder="IVA MXN (si hay)" />
+        <input id="eUuid" placeholder="UUID de la factura (si hay)" />
+        <button id="addExpense" type="button">Guardar gasto</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="/admin-fiscal.js" defer></script>
+</body>
+</html>
