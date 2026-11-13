@@ -6,7 +6,12 @@ import {
   hub,
   tickets,
 } from "../chat-hub";
-import { isValidEmoji, parseChannelInput, parseMessageInput } from "../chat-rules";
+import {
+  AUDIO_MESSAGES_ENABLED,
+  isValidEmoji,
+  parseChannelInput,
+  parseMessageInput,
+} from "../chat-rules";
 import {
   createChannel,
   createMessage,
@@ -182,6 +187,11 @@ chatRouter.post(
     const channel = await getAccessibleChannel(req.body?.channelId, req.user!.id);
     if (!channel) {
       res.status(404).json({ error: "Canal no encontrado." });
+      return;
+    }
+
+    if (req.body?.isAudio === true && !AUDIO_MESSAGES_ENABLED) {
+      res.status(400).json({ error: "Las notas de voz estarán disponibles pronto." });
       return;
     }
 
