@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { Planes } from './components/Planes';
 import { E2EESettingsModal } from './components/E2EESettingsModal';
-import   SettingsModal from './components/SettingsModal';
+import { SettingsModal } from './components/SettingsModal';
 import { AuthModal } from './components/AuthModal';
 import { AudioVoiceModal } from './components/AudioVoiceModal';
 import { CallModal, ActiveCall } from './components/CallModal';
