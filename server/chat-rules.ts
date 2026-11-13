@@ -4,8 +4,12 @@
 
 // Idiomas de la interfaz (coincide con SUPPORTED_LANGUAGES del frontend).
 export const LANGUAGE_CODES = [
-  "es", "en", "zh", "ja", "fr", "de", "pt", "it", "ru", "ko", "ar", "hi",
+  "es", "en", "zh", "ja", "fr", "de", "pt", "it", "ru", "ko", "ar", "pl",
 ] as const;
+
+// Las notas de voz aún no tienen cobro ni traducción de audio. Apagadas para que
+// nadie pueda llenar la base de datos con audios sin costo.
+export const AUDIO_MESSAGES_ENABLED = false;
 
 export const MAX_TEXT_CHARS = 4000;
 export const MAX_CHANNEL_NAME = 60;
@@ -17,7 +21,7 @@ export const MAX_CIPHER_CHARS = 12_000;
 export const LANGUAGE_NAMES: Record<string, string> = {
   es: "Español", en: "Inglés", zh: "Chino simplificado", ja: "Japonés",
   fr: "Francés", de: "Alemán", pt: "Portugués", it: "Italiano",
-  ru: "Ruso", ko: "Coreano", ar: "Árabe", hi: "Hindi",
+  ru: "Ruso", ko: "Coreano", ar: "Árabe", pl: "Polaco",
 };
 
 export function languageName(code: string): string {
@@ -217,4 +221,4 @@ export function serializeMessage(
     audioBase64: row.audioBase64 ?? undefined,
     reactions,
   };
-  }
+    }
