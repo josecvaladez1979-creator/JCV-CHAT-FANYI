@@ -23,7 +23,7 @@ const BCRYPT_COST = 12;
 
 // Idiomas que acepta la interfaz (coincide con SUPPORTED_LANGUAGES del frontend).
 const LANGUAGE_CODES = [
-  "es", "en", "zh", "ja", "fr", "de", "pt", "it", "ru", "ko", "ar", "hi",
+  "es", "en", "zh", "ja", "fr", "de", "pt", "it", "ru", "ko", "ar", "pl",
 ];
 
 // La interfaz usa roles en minúsculas y nombres propios de empresa.
