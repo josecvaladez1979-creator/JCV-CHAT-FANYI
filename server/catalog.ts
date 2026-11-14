@@ -130,3 +130,12 @@ export function contractTierFor(chars: number) {
   if (!Number.isSafeInteger(chars) || chars <= 0) return null;
   return CONTRACT_TIERS.find((t) => chars <= t.maxChars) ?? null;
     }
+
+// -------------------- Datos fiscales --------------------
+// IVA en México es 16%. Se guarda como porcentaje, no como decimal.
+// TAXPAYER_REGISTERED = false porque todavía no hay facturación real.
+// No lo pongas en true hasta que tu contador te diga que ya estás dado de alta.
+
+export const IVA_RATE_PERCENT = 16;
+
+export const TAXPAYER_REGISTERED = false;
