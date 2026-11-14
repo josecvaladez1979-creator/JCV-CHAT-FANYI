@@ -462,9 +462,14 @@ export default function App() {
     }
   };
 
-  const handleCreateChannel = async (name: string, description: string, isE2EE: boolean) => {
+  const handleCreateChannel = async (
+    name: string,
+    description: string,
+    isE2EE: boolean,
+    isPrivate: boolean = true
+  ) => {
     try {
-      const newChan: Channel = await api.createChannel(name, description, isE2EE);
+      const newChan: Channel = await api.createChannel(name, description, isE2EE, isPrivate);
       setChannels((prev) => (prev.some((c) => c.id === newChan.id) ? prev : [...prev, newChan]));
       setActiveChannelId(newChan.id);
 
