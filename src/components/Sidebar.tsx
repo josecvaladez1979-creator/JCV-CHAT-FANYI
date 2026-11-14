@@ -5,22 +5,28 @@ import {
   Plus,
   Users,
   MessageSquare,
-  Sparkles,
   Check,
-  ChevronRight,
+  Lock,
   Phone,
   Video,
 } from 'lucide-react';
 import { Channel, User, SUPPORTED_LANGUAGES } from '../types';
 
+// Se conservan las mismas propiedades que usa App.tsx. onSwitchUser ya no se
+// usa: cambiar de persona con un clic desapareció, cada quien entra con su cuenta.
 interface SidebarProps {
   channels: Channel[];
   activeChannelId: string;
   onSelectChannel: (channelId: string) => void;
   users: User[];
   currentUser: User | null;
-  onSwitchUser: (user: User) => void;
-  onCreateChannel: (name: string, description: string, isE2EE: boolean) => void;
+  onSwitchUser?: (user: User) => void;
+  onCreateChannel: (
+    name: string,
+    description: string,
+    isE2EE: boolean,
+    isPrivate?: boolean
+  ) => void;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
   onCallUser?: (user: User, type: 'voice' | 'video') => void;
@@ -32,7 +38,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectChannel,
   users,
   currentUser,
-  onSwitchUser,
   onCreateChannel,
   isMobileOpen,
   onCloseMobile,
@@ -42,14 +47,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [newChanName, setNewChanName] = useState('');
   const [newChanDesc, setNewChanDesc] = useState('');
   const [newChanE2EE, setNewChanE2EE] = useState(false);
+  // Por defecto un canal nuevo es PRIVADO: solo entra quien tenga su enlace.
+  const [newChanPrivate, setNewChanPrivate] = useState(true);
 
   const handleCreateChannelSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newChanName.trim()) return;
-    onCreateChannel(newChanName.trim(), newChanDesc.trim(), newChanE2EE);
+    onCreateChannel(newChanName.trim(), newChanDesc.trim(), newChanE2EE, newChanPrivate);
     setNewChanName('');
     setNewChanDesc('');
     setNewChanE2EE(false);
+    setNewChanPrivate(true);
     setShowNewChannelModal(false);
   };
 
@@ -57,9 +65,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return SUPPORTED_LANGUAGES.find((l) => l.code === code)?.flag || '🌐';
   };
 
+  const peers = users.filter((u) => u.id !== currentUser?.id);
+
   return (
     <>
-      {/* Mobile backdrop */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-20 md:hidden backdrop-blur-xs"
@@ -72,26 +81,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
           isMobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        {/* Sidebar Header */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm">
             <MessageSquare className="w-4 h-4 text-indigo-400" />
-            <span>Salas y Canales FĀNYÌ</span>
+            <span>Canales</span>
           </div>
           <button
             onClick={() => setShowNewChannelModal(true)}
             className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 hover:text-white border border-indigo-500/30 transition-colors"
-            title="Crear nueva sala o canal E2EE"
+            title="Crear un canal nuevo"
+            aria-label="Crear un canal nuevo"
           >
             <Plus className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Channel List */}
         <div className="flex-1 overflow-y-auto p-3 space-y-6">
+          {/* Canales */}
           <div>
             <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-3 mb-2 flex items-center justify-between">
-              <span>Canales de Traducción</span>
+              <span>Tus canales</span>
               <span className="text-[10px] text-slate-500 font-normal">{channels.length}</span>
             </div>
 
@@ -129,9 +138,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1">
+                      {ch.isPrivate && (
+                        <Lock
+                          className="w-3 h-3 text-slate-400"
+                          aria-label="Canal privado"
+                        />
+                      )}
                       {ch.isE2EE && (
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                          E2EE
+                          Cifrado
                         </span>
                       )}
                       {ch.unreadCount && ch.unreadCount > 0 ? (
@@ -146,120 +161,103 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          {/* Quick Persona Switcher for testing multi-language chat */}
+          {/* Personas de tus canales (solo se muestran, no se "suplantan") */}
           <div>
             <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-3 mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Usuarios Multilingües</span>
+                <span>Personas</span>
               </span>
-              <span className="text-[10px] text-indigo-400 font-medium">Cambiar 1-Clic</span>
+              <span className="text-[10px] text-slate-500 font-normal">{peers.length}</span>
             </div>
 
             <div className="space-y-1.5">
-              {users.map((u) => {
-                const isCurrent = currentUser?.id === u.id;
-                return (
-                  <div
-                    key={u.id}
-                    onClick={() => onSwitchUser(u)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onSwitchUser(u);
-                      }
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all text-left border cursor-pointer select-none ${
-                      isCurrent
-                        ? 'bg-slate-800/90 border-indigo-500/50 text-white shadow-sm'
-                        : 'bg-slate-900/60 border-slate-800/80 text-slate-300 hover:bg-slate-800/60 hover:text-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 truncate">
-                      <div className="relative shrink-0">
-                        <img
-                          src={u.avatar}
-                          alt={u.name}
-                          className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-700"
-                        />
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-slate-900 ${
-                            u.isOnline ? 'bg-emerald-400' : 'bg-slate-500'
-                          }`}
-                        />
+              {peers.length === 0 && (
+                <p className="px-3 text-[11px] text-slate-500">
+                  Aún no hay otras personas en tus canales. Comparte el enlace de un canal para invitarlas.
+                </p>
+              )}
+
+              {peers.map((u) => (
+                <div
+                  key={u.id}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs border bg-slate-900/60 border-slate-800/80 text-slate-300"
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    {u.avatar ? (
+                      <img
+                        src={u.avatar}
+                        alt={u.name}
+                        className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-700 shrink-0"
+                      />
+                    ) : (
+                      <span className="w-7 h-7 rounded-full ring-1 ring-slate-700 bg-indigo-700 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                        {u.name.trim().charAt(0).toUpperCase() || '?'}
+                      </span>
+                    )}
+                    <div className="truncate">
+                      <div className="font-medium text-slate-200 truncate flex items-center gap-1">
+                        <span>{u.name}</span>
+                        <span>{getLangFlag(u.preferredLanguage)}</span>
                       </div>
-                      <div className="truncate">
-                        <div className="font-medium text-slate-200 truncate flex items-center gap-1">
-                          <span>{u.name}</span>
-                          <span>{getLangFlag(u.preferredLanguage)}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 truncate">
-                          {u.preferredLanguage.toUpperCase()} • {u.subscriptionPlan || 'Free'}
-                        </div>
+                      <div className="text-[10px] text-slate-400 truncate">
+                        {u.preferredLanguage.toUpperCase()}
                       </div>
                     </div>
-
-                    {isCurrent ? (
-                      <span className="text-indigo-400 shrink-0">
-                        <Check className="w-4 h-4" />
-                      </span>
-                    ) : (
-                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        {onCallUser && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => onCallUser(u, 'voice')}
-                              className="p-1 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-colors"
-                              title={`Llamar por voz a ${u.name}`}
-                            >
-                              <Phone className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onCallUser(u, 'video')}
-                              className="p-1 rounded-lg text-slate-400 hover:text-indigo-400 hover:bg-slate-700/60 transition-colors"
-                              title={`Videollamada con ${u.name}`}
-                            >
-                              <Video className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+
+                  {onCallUser && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onCallUser(u, 'voice')}
+                        className="p-1 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-colors"
+                        title="Llamada de voz (próximamente)"
+                        aria-label={`Llamar a ${u.name}`}
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onCallUser(u, 'video')}
+                        className="p-1 rounded-lg text-slate-400 hover:text-indigo-400 hover:bg-slate-700/60 transition-colors"
+                        title="Videollamada (próximamente)"
+                        aria-label={`Videollamada con ${u.name}`}
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Footer info: SiliconFlow Qwen Free Model Info */}
+        {/* Pie: qué se cobra y qué no */}
         <div className="p-3 border-t border-slate-800 bg-slate-950/60">
-          <div className="p-2.5 rounded-xl bg-gradient-to-r from-indigo-950/40 to-slate-900 border border-indigo-900/40 text-[11px] text-slate-300 space-y-1">
-            <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Qwen3-32B & Qwen2-Audio</span>
+          <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+            <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+              <Check className="w-3.5 h-3.5" />
+              <span>Chat en tu idioma: gratis</span>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              IAs gratuitas en SiliconFlow para traducción multilingüe 99% y voz a texto.
+              Traducir con IA se paga con saldo. Las traducciones son automáticas y pueden tener errores.
             </p>
           </div>
         </div>
       </aside>
 
-      {/* New Channel Modal */}
+      {/* Crear canal */}
       {showNewChannelModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
             <h3 className="text-base font-bold text-slate-100 mb-1 flex items-center gap-2">
               <Hash className="w-5 h-5 text-indigo-400" />
-              <span>Crear Nuevo Canal o Sala</span>
+              <span>Crear un canal</span>
             </h3>
             <p className="text-xs text-slate-400 mb-4">
-              Configura una sala pública o con cifrado de extremo a extremo (E2EE).
+              Elige si será privado (solo entra quien tenga el enlace) y si tendrá cifrado de extremo a extremo.
             </p>
 
             <form onSubmit={handleCreateChannelSubmit} className="space-y-4">
@@ -270,6 +268,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <input
                   type="text"
                   required
+                  maxLength={60}
                   placeholder="ej. comercio-china-mexico"
                   value={newChanName}
                   onChange={(e) => setNewChanName(e.target.value)}
@@ -279,15 +278,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Descripción (Opcional)
+                  Descripción (opcional)
                 </label>
                 <input
                   type="text"
-                  placeholder="ej. Discusión de exportaciones con traducción automática"
+                  maxLength={200}
+                  placeholder="ej. Exportaciones con traducción automática"
                   value={newChanDesc}
                   onChange={(e) => setNewChanDesc(e.target.value)}
                   className="w-full px-3 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700 flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="privateCheckbox"
+                  checked={newChanPrivate}
+                  onChange={(e) => setNewChanPrivate(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700 cursor-pointer"
+                />
+                <label htmlFor="privateCheckbox" className="text-xs cursor-pointer select-none">
+                  <span className="font-semibold text-slate-200 block flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" />
+                    Canal privado
+                  </span>
+                  <span className="text-[11px] text-slate-400 block mt-0.5">
+                    Solo lo ven y entran quienes tengan su enlace. Si lo desmarcas, cualquier persona con cuenta lo verá.
+                  </span>
+                </label>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700 flex items-start gap-3">
@@ -301,10 +320,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <label htmlFor="e2eeCheckbox" className="text-xs cursor-pointer select-none">
                   <span className="font-semibold text-emerald-400 block flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Cifrado E2EE (Punto a Punto AES-256)
+                    Cifrado de extremo a extremo
                   </span>
                   <span className="text-[11px] text-slate-400 block mt-0.5">
-                    Los mensajes se cifran en el navegador antes de transmitirse. Solo los usuarios con la clave podrán leerlos.
+                    Los mensajes se cifran en tu dispositivo antes de enviarse y no se pueden traducir. Quien los lea necesita la clave, que debes compartirle por otro medio.
                   </span>
                 </label>
               </div>
@@ -321,7 +340,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="submit"
                   className="px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition-colors"
                 >
-                  Crear Canal
+                  Crear canal
                 </button>
               </div>
             </form>
