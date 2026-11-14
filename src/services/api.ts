@@ -160,12 +160,13 @@ export const api = {
   async createChannel(
     name: string,
     description: string,
-    isE2EE = false
+    isE2EE = false,
+    isPrivate = false
   ) {
     const res = await request('/api/chat/channels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description, isE2EE }),
+      body: JSON.stringify({ name, description, isE2EE, isPrivate }),
     });
 
     const data = await jsonOrThrow(res, 'No se pudo crear el canal');
