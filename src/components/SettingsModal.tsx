@@ -8,9 +8,14 @@ import {
   Play,
   RefreshCw,
   Scale,
+  LifeBuoy,
+  Mail,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { SUPPORTED_LANGUAGES, LanguageCode } from '../types';
 import { api } from '../services/api';
+import { SUPPORT_EMAIL } from '../contact';
 
 // Se conservan las mismas propiedades que usa App.tsx. El modelo de IA ya no
 // se elige desde el navegador: lo decide el servidor.
@@ -39,6 +44,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isTranslating, setIsTranslating] = useState(false);
   const [testTime, setTestTime] = useState<number | null>(null);
   const [centsPer1k, setCentsPer1k] = useState<number | null>(null);
+  const [copiedEmail, setCopiedEmail] = useState(false);
 
   // La tarifa se lee del servidor para mostrar siempre el precio vigente.
   useEffect(() => {
@@ -66,6 +72,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     centsPer1k !== null && testText.trim().length > 0
       ? Math.max(1, Math.ceil((testText.trim().length * centsPer1k) / 1000))
       : null;
+
+  const mailtoHref =
+    `mailto:${SUPPORT_EMAIL}` +
+    `?subject=${encodeURIComponent('Soporte JCV CHAT FĀNYÌ')}` +
+    `&body=${encodeURIComponent('Hola, necesito ayuda con:\n\n(Describe tu problema. No incluyas contraseñas.)')}`;
+
+  const handleCopyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText(SUPPORT_EMAIL);
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 2000);
+    } catch {
+      // Si el navegador no permite copiar, el correo está visible para copiarlo a mano.
+    }
+  };
 
   const handleRunTest = async () => {
     if (!testText.trim()) return;
@@ -195,6 +216,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
           )}
+        </div>
+
+        {/* Ayuda y soporte */}
+        <div className="mt-5 p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2.5">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
+            <LifeBuoy className="w-4 h-4 text-emerald-400" />
+            <span>Ayuda y soporte</span>
+          </div>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            ¿Tienes un problema, una duda o una solicitud sobre tus datos? Escríbenos. Nunca te pediremos tu contraseña.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={mailtoHref}
+              className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Escribir a soporte</span>
+            </a>
+            <button
+              type="button"
+              onClick={handleCopyEmail}
+              className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              {copiedEmail ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedEmail ? 'Copiado' : 'Copiar correo'}</span>
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 font-mono break-all select-text">{SUPPORT_EMAIL}</p>
         </div>
 
         <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-between">
