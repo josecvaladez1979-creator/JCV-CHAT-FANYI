@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   User as UserIcon,
@@ -44,6 +44,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [preferredLanguage, setPreferredLanguage] = useState<LanguageCode>('es');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [welcome, setWelcome] = useState<{ mxn: number; days: number; chars: number } | null>(null);
+
+  // Si hay saldo de bienvenida encendido, se anuncia en "Crear cuenta".
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    api
+      .getPricing()
+      .then((p: any) => {
+        if (!cancelled && p?.welcome) setWelcome(p.welcome);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -209,6 +225,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </form>
         ) : (
           <form onSubmit={handleRegisterSubmit} className="space-y-4">
+            {welcome && (
+              <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-xs leading-relaxed">
+                Al crear tu cuenta recibes <strong>${welcome.mxn} MXN</strong> de saldo de bienvenida para
+                probar la traducción (unos {welcome.chars.toLocaleString('es-MX')} caracteres), válido por{' '}
+                {welcome.days} días.
+              </div>
+            )}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                 Nombre Completo
