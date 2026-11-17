@@ -11,8 +11,9 @@ import {
   WALLET_TOPUPS,
   getB2BTier,
   packNotice,
-} from "../catalog";
+} from "../store";
 import { asyncHandler } from "../http";
+import { welcomeOffer } from "../promo";
 import { requireAuth } from "../security";
 import { checkoutReady } from "../stripe-payments";
 import { getWalletState } from "../wallet";
@@ -102,6 +103,7 @@ catalogRouter.get("/payments/providers", (_req, res) => {
 catalogRouter.get("/pricing", (_req, res) => {
   res.status(200).json({
     currency: CURRENCY,
+    welcome: welcomeOffer(),
     free: ["Chat de texto en el mismo idioma"],
     tariffs: TARIFFS,
     topups: Object.values(WALLET_TOPUPS).map((pack) => ({
