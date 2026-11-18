@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { Prisma, type Role } from "@prisma/client";
 import { prisma } from "../db";
 import { asyncHandler } from "../http";
+import { grantWelcomeCredit, welcomeOffer } from "../promo";
 import {
   ACCESS_TTL_SECONDS,
   REFRESH_COOKIE,
@@ -204,8 +205,19 @@ authRouter.post(
 
     const accessToken = await issueSession(res, user);
 
+    // Saldo de bienvenida (si está encendido). Un fallo aquí nunca bloquea el registro.
+    let welcome: ReturnType<typeof welcomeOffer> = null;
+    try {
+      if ((await grantWelcomeCredit(user.id)) === "granted") {
+        welcome = welcomeOffer();
+      }
+    } catch (error) {
+      console.error("[promo] No se pudo entregar la bienvenida:", error instanceof Error ? error.message : error);
+    }
+
     res.status(201).json({
       message: "Cuenta creada correctamente.",
+      welcome,
       user: toClientUser(user),
       accessToken,
       tokenType: "Bearer",
