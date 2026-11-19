@@ -273,13 +273,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           {/* Call Voice Button with data-i18n and persistent startCall */}
           <button
             data-i18n="call"
-            onClick={() => {
-              if (typeof (window as any).startCall === 'function') {
-                (window as any).startCall(false);
-              } else if (onStartVoiceCall) {
-                onStartVoiceCall();
-              }
-            }}
+            onClick={() => onStartVoiceCall?.()}
             className="p-2 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-emerald-400 border border-slate-700/80 hover:border-emerald-500/40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm text-xs font-semibold"
             title={t('call')}
           >
@@ -290,13 +284,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           {/* Video Call Button with data-i18n and persistent startCall */}
           <button
             data-i18n="videoCall"
-            onClick={() => {
-              if (typeof (window as any).startCall === 'function') {
-                (window as any).startCall(true);
-              } else if (onStartVideoCall) {
-                onStartVideoCall();
-              }
-            }}
+            onClick={() => onStartVideoCall?.()}
             className="p-2 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-indigo-400 border border-slate-700/80 hover:border-indigo-500/40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm text-xs font-semibold"
             title={t('videoCall')}
           >
