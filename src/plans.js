@@ -1,48 +1,35 @@
-// ===== MODELO DEFINITIVO: JCV CHAT ES GRATIS DE POR VIDA =====
-// REGLA DE ORO: JCV CHAT nunca está sujeto a plan. Es gratis de por vida.
-// El chat normal, llamadas, videollamadas y notas de voz son 100% ILIMITADOS Y GRATUITOS.
-// Los planes o packs únicamente añaden TRADUCCIÓN IA multilingüe con Qwen3-32B.
+// ===== Compatibilidad: ya NO decide planes ni pagos =====
+// Antes este archivo decidía en el navegador si alguien "tenía un pack pagado"
+// leyendo localStorage, y cualquiera podía engañarlo desde las herramientas del
+// navegador. Ahora el saldo y los cobros los lleva el servidor.
+//
+// Se conserva con los mismos nombres porque main.tsx lo importa y otros
+// scripts podrían usar estas funciones. Cuando se revisen jcv-world.js e i18n.js
+// se podrá borrar este archivo, junto con su importación en main.tsx.
 
 export const PLAN_FREEMIUM = {
-  id: "freemium_vida",
-  nombre: "Plan Freemium de por vida",
+  id: "freemium",
+  nombre: "Chat gratis en tu idioma",
   precio: 0,
   traducciones_incluidas: 0,
-  chat_nativo: "ILIMITADO_GRATIS",
-  llamadas_voz: "ILIMITADO_GRATIS", 
-  videollamadas: "ILIMITADO_GRATIS",
-  audio: "ILIMITADO_GRATIS",
-  vigencia: "HASTA_QUE_LA_APP_DEJE_DE_EXISTIR"
+  chat_nativo: "GRATIS",
+  llamadas_voz: "CON_SALDO",
+  videollamadas: "CON_SALDO",
+  audio: "CON_SALDO",
+  vigencia: "SIN_VENCIMIENTO",
 };
 
 export function getPlan() {
-  if (typeof window === 'undefined') return PLAN_FREEMIUM;
-  const storedPlan = localStorage.getItem('jcv_plan');
-  if (!storedPlan || storedPlan === 'freemium' || storedPlan === 'free') {
-    return PLAN_FREEMIUM;
-  }
-  try {
-    return JSON.parse(storedPlan);
-  } catch (e) {
-    return PLAN_FREEMIUM;
-  }
+  return PLAN_FREEMIUM;
 }
 
+// El navegador nunca decide si hay un pago: lo decide el servidor.
 export function tienePackPagado() {
-  if (typeof window === 'undefined') return false;
-  const plan = localStorage.getItem('jcv_user_plan');
-  const paidPlans = ['express', 'semanal', 'mensual', 'anual', 'pack_10', 'pack_b2b', 'individual_pro', 'b2b_vault'];
-  return paidPlans.includes(plan || '');
+  return false;
 }
 
-export function traducirMensaje(mensaje, traducirConSiliconFlow) {
-  if (getPlan().traducciones_incluidas === 0 && !tienePackPagado()) {
-    return mensaje; // Devuelve mensaje original en su idioma natal, sin traducir
-  }
-  // Si tiene Pack 10, B2B, etc, ahí sí usa SiliconFlow 99%
-  if (typeof traducirConSiliconFlow === 'function') {
-    return traducirConSiliconFlow(mensaje);
-  }
+// La traducción la hace el servidor según el saldo; aquí no se traduce nada.
+export function traducirMensaje(mensaje) {
   return mensaje;
 }
 
@@ -51,5 +38,5 @@ if (typeof window !== 'undefined') {
   window.getPlan = getPlan;
   window.tienePackPagado = tienePackPagado;
   window.traducirMensaje = traducirMensaje;
-  window.traduccionActiva = tienePackPagado();
+  window.traduccionActiva = false;
 }
