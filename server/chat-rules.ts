@@ -168,6 +168,23 @@ export function targetLanguages(memberLanguages: string[], senderLanguage: strin
   return out;
 }
 
+// Foto de perfil por defecto: círculo de color con la inicial del nombre.
+// Va como imagen SVG incrustada (data URI): no hay que guardar ni pedir archivos,
+// y un SVG dentro de <img> no puede ejecutar código.
+export function defaultAvatar(name: string, id: string): string {
+  const initial = (Array.from(name.trim())[0] ?? "?").toUpperCase();
+  const safe = initial.replace(/[&<>"']/g, "?");
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const hue = hash % 360;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>` +
+    `<rect width='64' height='64' fill='hsl(${hue},55%,38%)'/>` +
+    `<text x='32' y='43' font-size='30' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='white'>${safe}</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 export function groupReactions(rows: { emoji: string; userId: string }[]): Record<string, string[]> {
   const map: Record<string, string[]> = {};
   for (const r of rows) {
@@ -208,7 +225,7 @@ export function serializeMessage(
     channelId: row.channelId,
     senderId: row.senderId,
     senderName: sender.name,
-    senderAvatar: sender.avatar ?? "",
+    senderAvatar: sender.avatar || defaultAvatar(sender.name, row.senderId),
     senderLanguage: row.sourceLanguage,
     timestamp: row.createdAt.getTime(),
     text: row.text,
@@ -221,4 +238,4 @@ export function serializeMessage(
     audioBase64: row.audioBase64 ?? undefined,
     reactions,
   };
-    }
+      }
