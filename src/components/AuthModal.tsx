@@ -4,6 +4,8 @@ import {
   User as UserIcon,
   Mail,
   Lock,
+  Eye,
+  EyeOff,
   ArrowRight,
   Sparkles,
 } from 'lucide-react';
@@ -44,6 +46,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [preferredLanguage, setPreferredLanguage] = useState<LanguageCode>('es');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [welcome, setWelcome] = useState<{ mxn: number; days: number; chars: number } | null>(null);
 
   // Si hay saldo de bienvenida encendido, se anuncia en "Crear cuenta".
@@ -59,6 +62,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return () => {
       cancelled = true;
     };
+  }, [isOpen]);
+
+  // Al cerrar la ventana, la contraseña vuelve a quedar oculta.
+  useEffect(() => {
+    if (!isOpen) setShowPassword(false);
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -119,6 +127,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const inputClass =
     'w-full pl-9 pr-3.5 py-2.5 text-xs rounded-xl bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500';
+  const passwordInputClass = inputClass.replace('pr-3.5', 'pr-11');
+
+  const eyeButton = (
+    <button
+      type="button"
+      onClick={() => setShowPassword((v) => !v)}
+      className="absolute right-2 top-1.5 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors cursor-pointer"
+      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+      title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+    >
+      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
@@ -203,14 +224,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   autoComplete="current-password"
                   placeholder="Tu contraseña"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
+                  className={passwordInputClass}
                 />
+                {eyeButton}
               </div>
             </div>
 
@@ -276,15 +298,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   minLength={MIN_PASSWORD_CHARS}
                   autoComplete="new-password"
                   placeholder={`Mínimo ${MIN_PASSWORD_CHARS} caracteres`}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
+                  className={passwordInputClass}
                 />
+                {eyeButton}
               </div>
               <p className="mt-1 text-[10px] text-slate-500">
                 Entre {MIN_PASSWORD_CHARS} caracteres y {MAX_PASSWORD_BYTES} bytes.
