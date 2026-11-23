@@ -23,7 +23,7 @@
 
 ### 🔤 Traducción neuronal en tiempo real
 - **Motor Qwen3-32B** vía SiliconFlow con fallback a **Gemini 2.5 Flash**
-- **12 idiomas soportados**: Español (MX), Inglés, Chino, Japonés, Francés, Alemán, Portugués, Italiano, Ruso, Coreano, Árabe, Hindi
+- **12 idiomas soportados**: Español (MX), Inglés, Chino, Japonés, Francés, Alemán, Portugués, Italiano, Ruso, Coreano, Árabe, polaco
 - **Traducción de audio** con Qwen2-Audio-7B-Instruct
 - **Cifrado E2EE AES-256-GCM** para canales sensibles
 
