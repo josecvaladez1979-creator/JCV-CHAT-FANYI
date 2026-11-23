@@ -1,6 +1,6 @@
 export type LanguageCode =
   | 'es' | 'en' | 'zh' | 'ja' | 'fr' | 'de'
-  | 'pt' | 'it' | 'ru' | 'ko' | 'ar' | 'hi';
+  | 'pt' | 'it' | 'ru' | 'ko' | 'ar' | 'pl';
 
 export interface Language {
   code: LanguageCode;
@@ -21,7 +21,7 @@ export const SUPPORTED_LANGUAGES: Language[] = [
   { code: 'ru', name: 'Ruso', nativeName: 'Русский', flag: '🇷🇺' },
   { code: 'ko', name: 'Coreano', nativeName: '한국어', flag: '🇰🇷' },
   { code: 'ar', name: 'Árabe', nativeName: 'العربية', flag: '🇸🇦' },
-  { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'pl', name: 'Polaco', nativeName: 'Polski', flag: '🇵🇱' },
 ];
 
 // ═══════════════════════════════════════════════
