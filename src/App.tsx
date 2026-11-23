@@ -12,6 +12,7 @@ import { LegalTermsModal } from './components/LegalTermsModal';
 import { User, Channel, Message, LanguageCode } from './types';
 import { api } from './services/api';
 import { realtimeChat } from './services/sse';
+import { mergeMessages } from './utils/messages';
 import { playNotificationSound } from './utils/audio';
 
 // Las llamadas y videollamadas aún no tienen servidor. Mientras sea false no se
@@ -84,6 +85,11 @@ export default function App() {
   const [existingCallStream, setExistingCallStream] = useState<MediaStream | null>(null);
 
   const lastTypingRef = useRef(0);
+
+  // Estado de la conexión en vivo y actualización de respaldo.
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [showOffline, setShowOffline] = useState(false);
+  const refreshRef = useRef<(() => void) | null>(null);
 
   // Sync current user to localStorage
   useEffect(() => {
@@ -207,6 +213,55 @@ export default function App() {
       realtimeChat.disconnect();
     }
   }, [currentUser?.id]);
+
+  // 4b) ¿Está viva la conexión en vivo? Al (re)conectar se actualiza de inmediato.
+  useEffect(() => {
+    const off = realtimeChat.on('connection_status', (status: { connected: boolean }) => {
+      const connected = Boolean(status?.connected);
+      setLiveConnected(connected);
+      if (connected) refreshRef.current?.();
+    });
+    return off;
+  }, []);
+
+  // El aviso de "sin conexión en vivo" solo aparece si dura más de 4 segundos.
+  useEffect(() => {
+    if (!currentUser?.id || liveConnected) {
+      setShowOffline(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowOffline(true), 4000);
+    return () => clearTimeout(timer);
+  }, [currentUser?.id, liveConnected]);
+
+  // 4c) Respaldo: si la conexión en vivo falla, se consulta cada 5 s; si funciona,
+  // cada 30 s como red de seguridad. También al volver a abrir la aplicación.
+  useEffect(() => {
+    if (!currentUser?.id || !activeChannelId) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const fresh = await api.getMessages(activeChannelId);
+        if (!cancelled) setMessages((prev) => mergeMessages(prev, fresh));
+      } catch (e) {
+        // se reintenta en la siguiente vuelta
+      }
+    };
+    refreshRef.current = refresh;
+
+    const interval = setInterval(refresh, liveConnected ? 30000 : 5000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [currentUser?.id, activeChannelId, liveConnected]);
 
   // 5) Eventos en tiempo real.
   useEffect(() => {
@@ -503,6 +558,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-[#f8fafc] flex flex-col font-sans select-none">
+      {currentUser && showOffline && (
+        <div
+          role="status"
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 rounded-full bg-amber-950/90 border border-amber-500/40 text-amber-200 text-[11px] shadow-lg"
+        >
+          Sin conexión en vivo · actualizando cada 5 s
+        </div>
+      )}
+
       <Navbar
         currentUser={currentUser}
         selectedLanguage={selectedLanguage}
@@ -625,4 +689,4 @@ export default function App() {
       <LegalTermsModal isOpen={isLegalTermsOpen} onClose={() => setIsLegalTermsOpen(false)} />
     </div>
   );
-}
+      }
