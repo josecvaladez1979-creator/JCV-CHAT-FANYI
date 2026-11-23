@@ -177,9 +177,9 @@ export async function emitToChannel(
   channel: Pick<ChannelRow, "id" | "isPrivate">,
   event: string,
   data: unknown
-): Promise<void> {
+): Promise<number> {
   const audience = channel.isPrivate ? new Set(await memberIds(channel.id)) : null;
-  hub.broadcast(event, data, audience);
+  return hub.broadcast(event, data, audience);
 }
 
 // -------------------- Mensajes --------------------
@@ -418,4 +418,4 @@ export async function runTranslationJob(
   await emitToChannel(channel, "message_translated", { messageId: msg.id, translations });
 
   return { status: "done", languages: Object.keys(translations) };
-      }
+  }
