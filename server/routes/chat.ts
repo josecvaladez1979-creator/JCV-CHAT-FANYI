@@ -76,12 +76,20 @@ chatRouter.get("/stream", (req, res) => {
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+  // Sin retraso ni cierre por inactividad del socket: es una conexión larga.
+  req.socket?.setNoDelay?.(true);
+  req.socket?.setKeepAlive?.(true);
+  res.flushHeaders?.();
   res.write("retry: 3000\n\n");
 
   const conn = hub.add(userId, res);
   hub.sendTo(conn, "connected", { userId });
+  console.log(`[sse] conexión abierta (usuario ${userId.slice(0, 6)}…, conexiones: ${hub.count()})`);
 
-  req.on("close", () => hub.remove(conn.id));
+  req.on("close", () => {
+    hub.remove(conn.id);
+    console.log(`[sse] conexión cerrada (usuario ${userId.slice(0, 6)}…, conexiones: ${hub.count()})`);
+  });
 });
 
 // -------------------- Todo lo demás exige sesión --------------------
@@ -204,7 +212,8 @@ chatRouter.post(
 
     const { id, message } = await createMessage(req.user!.id, channel, parsed.value);
 
-    await emitToChannel(channel, "new_message", message);
+    const delivered = await emitToChannel(channel, "new_message", message);
+    console.log(`[chat] mensaje entregado en vivo a ${delivered} conexión(es)`);
 
     // La traducción corre aparte: el mensaje ya se entregó.
     if (!parsed.value.isE2EE && !parsed.value.isAudio) {
