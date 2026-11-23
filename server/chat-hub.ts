@@ -43,11 +43,13 @@ export class ChatHub {
     return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   }
 
-  private safeWrite(conn: Connection, chunk: string): void {
+  private safeWrite(conn: Connection, chunk: string): boolean {
     try {
       conn.res.write(chunk);
+      return true;
     } catch {
       this.connections.delete(conn.id);
+      return false;
     }
   }
 
@@ -57,13 +59,16 @@ export class ChatHub {
 
   // audience = null  → todos los conectados (canales públicos)
   // audience = Set   → solo esos usuarios (canales privados)
-  broadcast(event: string, data: unknown, audience: Set<string> | null): void {
+  // Devuelve a cuántas conexiones se entregó el aviso (sirve para diagnosticar).
+  broadcast(event: string, data: unknown, audience: Set<string> | null): number {
     const chunk = this.frame(event, data);
+    let delivered = 0;
     for (const conn of [...this.connections.values()]) {
       if (audience === null || audience.has(conn.userId)) {
-        this.safeWrite(conn, chunk);
+        if (this.safeWrite(conn, chunk)) delivered++;
       }
     }
+    return delivered;
   }
 
   // Comentario SSE: mantiene viva la conexión a través de proxies.
@@ -134,4 +139,4 @@ export function startChatTimers(): () => void {
     clearInterval(beat);
     clearInterval(purge);
   };
-  }
+                        }
