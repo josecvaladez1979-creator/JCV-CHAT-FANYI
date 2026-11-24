@@ -17,6 +17,9 @@ import { prisma } from "./server/db";
 import { bootstrapAdminFromEnv } from "./server/admin-bootstrap";
 import { adminFiscalRouter } from "./server/routes/admin-fiscal";
 import { authRouter } from "./server/routes/auth";
+import { adminUsersRouter } from "./server/routes/admin-users";
+import { recoveryRouter } from "./server/routes/recovery";
+import { startRetentionJob } from "./server/message-retention";
 import { chatRouter } from "./server/routes/chat";
 import { catalogRouter } from "./server/routes/store";
 import { paymentsRouter, stripeWebhookHandler } from "./server/routes/payments";
@@ -86,11 +89,13 @@ app.use("/api", apiLimiter);
 
 app.use(systemRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/auth", recoveryRouter);
 app.use("/api", catalogRouter);
 app.use("/api", translateRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api", paymentsRouter);
 app.use("/api/admin", adminFiscalRouter);
+app.use("/api/admin", adminUsersRouter);
 
 // Cualquier otra ruta de la API responde JSON, nunca HTML.
 app.use("/api", (_req: Request, res: Response) => {
@@ -167,6 +172,7 @@ async function startServer(): Promise<void> {
   }
 
   const stopChatTimers = startChatTimers();
+  const stopRetention = startRetentionJob();
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`JCV CHAT FĀNYÌ escuchando en el puerto ${PORT}`);
@@ -176,6 +182,7 @@ async function startServer(): Promise<void> {
   const shutdown = (signal: string) => {
     console.log(`${signal} recibido. Cerrando servidor...`);
     stopChatTimers();
+    stopRetention();
     hub.closeAll(); // las conexiones de tiempo real impedirían cerrar el servidor
     server.close(() => {
       prisma.$disconnect().finally(() => process.exit(0));
