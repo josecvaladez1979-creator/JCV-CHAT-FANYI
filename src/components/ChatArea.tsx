@@ -9,6 +9,7 @@ import {
   Video,
   Link2,
   Check,
+  Trash2,
 } from 'lucide-react';
 import { Message, Channel, User, LanguageCode } from '../types';
 import { MessageItem } from './MessageItem';
@@ -39,6 +40,7 @@ interface ChatAreaProps {
   typingUsers: { userId: string; userName: string }[];
   onTyping: (isTyping: boolean) => void;
   onReaction: (messageId: string, emoji: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
   onStartVoiceCall?: () => void;
   onStartVideoCall?: () => void;
   onOpenSubscription?: () => void;
@@ -67,6 +69,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   typingUsers,
   onTyping,
   onReaction,
+  onDeleteMessage,
   onStartVoiceCall,
   onStartVideoCall,
   onOpenSubscription,
@@ -349,19 +352,41 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
         </div>
 
-        {messages.map((msg) => (
-          <MessageItem
-            key={msg.id}
-            message={msg}
-            currentUser={currentUser}
-            viewerLanguage={viewerLanguage}
-            isDecrypted={Boolean(decryptedMap[msg.id])}
-            decryptedContent={decryptedMap[msg.id]}
-            decryptionError={Boolean(decryptionErrors[msg.id])}
-            onReaction={onReaction}
-            onOpenE2EEConfig={onOpenE2EESettings}
-          />
-        ))}
+        {messages.map((msg) => {
+          // Cada quien puede borrar los suyos; un administrador, cualquiera.
+          const isOwn = Boolean(currentUser && msg.senderId === currentUser.id);
+          const canDelete = Boolean(
+            onDeleteMessage && currentUser && (isOwn || currentUser.role === 'admin')
+          );
+
+          return (
+            <div key={msg.id}>
+              <MessageItem
+                message={msg}
+                currentUser={currentUser}
+                viewerLanguage={viewerLanguage}
+                isDecrypted={Boolean(decryptedMap[msg.id])}
+                decryptedContent={decryptedMap[msg.id]}
+                decryptionError={Boolean(decryptionErrors[msg.id])}
+                onReaction={onReaction}
+                onOpenE2EEConfig={onOpenE2EESettings}
+              />
+              {canDelete && (
+                <div className={`px-16 -mt-1 mb-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteMessage!(msg.id)}
+                    className="p-1 rounded-lg text-slate-600 hover:text-rose-400 hover:bg-slate-800/70 transition-colors cursor-pointer"
+                    title="Borrar mensaje"
+                    aria-label="Borrar mensaje"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {/* Typing indicator bubble */}
         {typingUsers.length > 0 && (
