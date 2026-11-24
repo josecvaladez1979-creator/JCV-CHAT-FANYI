@@ -96,6 +96,7 @@ model User {
   messages          Message[]
   channelMemberships ChannelMember[]
   reactionsGiven    MessageReaction[]
+  passwordResets    PasswordReset[]
 
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -240,6 +241,7 @@ model Message {
   @@index([channelId, createdAt])
   @@index([senderId])
   @@index([orgId])
+  @@index([createdAt])
 }
 
 // ═══════════════════════════════════════════════
@@ -387,4 +389,22 @@ model MessageReaction {
 
   @@unique([messageId, userId, emoji])
   @@index([messageId])
+}
+
+
+// ═══════════════════════════════════════════════
+// RECUPERACIÓN DE CUENTA — enlaces de un solo uso
+// Solo se guarda el hash del enlace, nunca el enlace.
+// ═══════════════════════════════════════════════
+model PasswordReset {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
 }
