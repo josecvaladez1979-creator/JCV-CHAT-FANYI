@@ -1,144 +1,73 @@
-(() => {
-  "use strict";
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Administración — JCV CHAT FĀNYÌ</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 16px; }
+    h1 { font-size: 1.15rem; } h2 { font-size: 1rem; margin-top: 0; }
+    input, select, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; }
+    button { cursor: pointer; background: #4f46e5; border-color: #4f46e5; }
+    button.secondary { background: #1e293b; border-color: #475569; }
+    button.danger { background: #be123c; border-color: #be123c; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .msg { margin: 8px 0; min-height: 1.2em; } .err { color: #fda4af; } .ok { color: #86efac; }
+    .note { font-size: 0.75rem; color: #94a3b8; }
+    .warn { font-size: 0.8rem; color: #fcd34d; }
+    #link { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+    ul { margin: 6px 0; padding-left: 18px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>Administración</h1>
+  <p class="note">Recuperar cuentas y limpiar mensajes. Solo para administradores.</p>
+  <div id="msg" class="msg" role="status"></div>
 
-  // El token vive solo en memoria: al recargar la página hay que volver a entrar.
-  let token = null;
+  <section id="login" class="card">
+    <h2>Acceso de administrador</h2>
+    <div class="row">
+      <input id="email" type="email" placeholder="Correo" autocomplete="username" />
+      <input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" />
+      <button id="loginBtn" type="button">Entrar</button>
+    </div>
+  </section>
 
-  const $ = (id) => document.getElementById(id);
-  const when = (iso) =>
-    new Date(iso).toLocaleString("es-MX", { timeZone: "America/Mexico_City" });
-  const mb = (bytes) =>
-    bytes === null || bytes === undefined ? "no disponible" : (bytes / 1048576).toFixed(2) + " MB";
+  <section id="main" hidden>
+    <div class="card">
+      <h2>Recuperar la cuenta de un usuario</h2>
+      <p class="warn">
+        Envía el enlace SOLO al correo con el que se registró la cuenta (el que escribes aquí), nunca a otra dirección.
+        Sirve una sola vez y vence en 1 hora. Al usarlo se cierran las sesiones abiertas de esa cuenta.
+      </p>
+      <div class="row">
+        <input id="userEmail" type="email" placeholder="Correo de la cuenta" />
+        <button id="linkBtn" type="button">Generar enlace</button>
+      </div>
+      <div id="linkBox" hidden>
+        <p id="linkInfo" class="note"></p>
+        <input id="link" type="text" readonly />
+        <div class="row"><button id="copyBtn" type="button" class="secondary">Copiar enlace</button></div>
+      </div>
+    </div>
 
-  function say(text, ok) {
-    const el = $("msg");
-    el.textContent = text || "";
-    el.className = "msg " + (text ? (ok ? "ok" : "err") : "");
-  }
+    <div class="card">
+      <h2>Mensajes y espacio</h2>
+      <div class="row"><button id="statsBtn" type="button" class="secondary">Ver cuántos hay</button></div>
+      <ul id="stats"></ul>
+      <p class="note">Borrar es permanente. Para que se borre solo, define MESSAGE_RETENTION_DAYS en Render.</p>
+      <div class="row">
+        <label for="days" class="note" style="align-self:center">Borrar los de más de</label>
+        <input id="days" type="number" min="1" max="3650" value="90" style="width:90px" />
+        <span class="note" style="align-self:center">días</span>
+        <button id="purgeBtn" type="button" class="danger">Borrar</button>
+      </div>
+    </div>
+  </section>
 
-  async function api(path, options) {
-    const opts = options || {};
-    const headers = Object.assign({}, opts.headers || {});
-    if (token) headers.Authorization = "Bearer " + token;
-    const res = await fetch(path, Object.assign({}, opts, { headers, credentials: "include" }));
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Error " + res.status);
-    }
-    return res;
-  }
-
-  function jsonPost(path, body) {
-    return api(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  }
-
-  // Siempre textContent: nada de lo que viene del servidor se pinta como HTML.
-  function showStats(stats) {
-    const list = $("stats");
-    list.textContent = "";
-    const lines = [
-      "Mensajes en total: " + stats.total.toLocaleString("es-MX"),
-      "Con más de 30 días: " + stats.older30.toLocaleString("es-MX"),
-      "Con más de 90 días: " + stats.older90.toLocaleString("es-MX"),
-      "Espacio que ocupan en la base de datos: " + mb(stats.bytes),
-    ];
-    for (const line of lines) {
-      const li = document.createElement("li");
-      li.textContent = line;
-      list.appendChild(li);
-    }
-  }
-
-  $("loginBtn").addEventListener("click", async () => {
-    say("Entrando…", true);
-    try {
-      const res = await jsonPost("/api/auth/login", {
-        email: $("email").value,
-        password: $("password").value,
-      });
-      token = (await res.json()).accessToken;
-      $("password").value = "";
-      await api("/api/admin/messages/stats"); // falla con 403 si no es administrador
-      $("login").hidden = true;
-      $("main").hidden = false;
-      say("", true);
-    } catch (e) {
-      token = null;
-      say(e.message, false);
-    }
-  });
-
-  $("linkBtn").addEventListener("click", async () => {
-    say("Generando…", true);
-    $("linkBox").hidden = true;
-    try {
-      const res = await jsonPost("/api/admin/users/recovery-link", { email: $("userEmail").value });
-      const data = await res.json();
-      $("link").value = data.link;
-      $("linkInfo").textContent =
-        "Cuenta: " + data.name + " (" + data.email + "). Vence el " + when(data.expiresAt) + ". Sirve una sola vez.";
-      $("linkBox").hidden = false;
-      say("Enlace generado. Envíalo al correo registrado de esa cuenta.", true);
-    } catch (e) {
-      say(e.message, false);
-    }
-  });
-
-  $("copyBtn").addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText($("link").value);
-      say("Enlace copiado.", true);
-    } catch (e) {
-      $("link").select();
-      say("No se pudo copiar solo: el enlace quedó seleccionado, cópialo a mano.", false);
-    }
-  });
-
-  $("statsBtn").addEventListener("click", async () => {
-    say("Consultando…", true);
-    try {
-      showStats(await (await api("/api/admin/messages/stats")).json());
-      say("", true);
-    } catch (e) {
-      say(e.message, false);
-    }
-  });
-
-  $("purgeBtn").addEventListener("click", async () => {
-    const days = Number($("days").value);
-    if (!Number.isInteger(days) || days < 1 || days > 3650) {
-      say("Escribe un número entero de días entre 1 y 3650.", false);
-      return;
-    }
-    say("Contando…", true);
-    try {
-      const stats = await (await api("/api/admin/messages/stats?days=" + days)).json();
-      showStats(stats);
-      const count = stats.olderThanDays || 0;
-      if (count === 0) {
-        say("No hay mensajes con más de " + days + " días.", true);
-        return;
-      }
-      const sure = window.confirm(
-        "Se borrarán " + count.toLocaleString("es-MX") + " mensajes con más de " + days + " días. Es PERMANENTE. ¿Continuar?"
-      );
-      if (!sure) {
-        say("Cancelado. No se borró nada.", true);
-        return;
-      }
-      const result = await (await jsonPost("/api/admin/messages/purge", { days, confirm: true })).json();
-      say(
-        "Se borraron " + result.deleted.toLocaleString("es-MX") + " mensajes." +
-          (result.capped ? " Quedan más: vuelve a pulsar Borrar." : ""),
-        true
-      );
-      showStats(await (await api("/api/admin/messages/stats")).json());
-    } catch (e) {
-      say(e.message, false);
-    }
-  });
-})();
+  <script src="/admin-usuarios.js" defer></script>
+</body>
+</html>
