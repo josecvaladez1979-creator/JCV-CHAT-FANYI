@@ -27,6 +27,7 @@ import {
   serializeChannel,
   toggleReaction,
 } from "../chat-service";
+import { deleteMessage } from "../message-delete";
 import { asyncHandler } from "../http";
 import { requireAuth } from "../security";
 
@@ -180,11 +181,14 @@ chatRouter.get(
     // Quien abre un canal pasa a ser miembro (así recibe sus traducciones).
     await ensureMember(channel.id, req.user!.id);
 
+    // Hora del servidor ANTES de consultar: el cliente la usa para distinguir
+    // un mensaje borrado de uno que aún no aparece en la lista.
+    const serverTime = Date.now();
     const messages = await listMessages(channel.id, {
       before,
       limit: Number.isFinite(limit) ? limit : 100,
     });
-    res.status(200).json({ messages });
+    res.status(200).json({ messages, serverTime });
   })
 );
 
@@ -279,5 +283,32 @@ chatRouter.get(
   readLimiter,
   asyncHandler(async (req, res) => {
     res.status(200).json({ users: await listPeers(req.user!.id) });
+  })
+);
+
+chatRouter.delete(
+  "/messages/:id",
+  messageLimiter,
+  asyncHandler(async (req, res) => {
+    const result = await deleteMessage(req.user!.id, req.params.id);
+
+    if (!result.ok) {
+      res.status(result.error === "forbidden" ? 403 : 404).json({
+        error:
+          result.error === "forbidden"
+            ? "Solo puedes borrar tus propios mensajes."
+            : "Mensaje no encontrado.",
+      });
+      return;
+    }
+
+    // Desaparece en vivo para todos los que están en el canal.
+    if (result.channel) {
+      await emitToChannel(result.channel, "message_deleted", {
+        messageId: req.params.id,
+        channelId: result.channelId,
+      });
+    }
+    res.status(204).end();
   })
 );
