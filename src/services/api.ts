@@ -282,6 +282,38 @@ export const api = {
     return data.reactions as Record<string, string[]>;
   },
 
+  // Mensajes con la hora del servidor (para el respaldo de actualización).
+  async fetchMessages(channelId: string) {
+    const res = await request('/api/chat/messages?channelId=' + encodeURIComponent(channelId));
+    const data = await jsonOrThrow(res, 'No se pudieron cargar los mensajes');
+    return {
+      messages: data.messages as any[],
+      serverTime: typeof data.serverTime === 'number' ? data.serverTime : Date.now(),
+    };
+  },
+
+  async deleteMessage(messageId: string) {
+    const res = await request('/api/chat/messages/' + encodeURIComponent(messageId), {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const error: any = new Error(data.error || 'No se pudo borrar el mensaje');
+      error.status = res.status;
+      throw error;
+    }
+  },
+
+  // Cambia la contraseña con el enlace que entregó el administrador.
+  async resetPassword(token: string, password: string) {
+    const res = await request('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+    return jsonOrThrow(res, 'No se pudo cambiar la contraseña');
+  },
+
   // Cierra la sesión en el servidor (revoca la renovación) y borra el token local.
   async logout() {
     try {
