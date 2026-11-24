@@ -91,6 +91,9 @@ export default function App() {
   const [showOffline, setShowOffline] = useState(false);
   const refreshRef = useRef<(() => void) | null>(null);
 
+  // Enlace de recuperación de cuenta (/?reset=...).
+  const [resetToken, setResetToken] = useState<string | null>(null);
+
   // Sync current user to localStorage
   useEffect(() => {
     if (currentUser) {
@@ -104,6 +107,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('jcv_e2ee_passphrases', JSON.stringify(channelPassphrases));
   }, [channelPassphrases]);
+
+  // 0) Enlace de recuperación de cuenta: /?reset=<64 caracteres>.
+  // Se lee una vez y se quita de la dirección (no queda en el historial).
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('reset');
+    if (token && /^[0-9a-f]{64}$/.test(token)) {
+      setResetToken(token);
+      setIsAuthOpen(true);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
 
   // 1) Verificar la sesión con el servidor al abrir la app.
   useEffect(() => {
@@ -242,8 +256,10 @@ export default function App() {
 
     const refresh = async () => {
       try {
-        const fresh = await api.getMessages(activeChannelId);
-        if (!cancelled) setMessages((prev) => mergeMessages(prev, fresh));
+        const fresh = await api.fetchMessages(activeChannelId);
+        if (!cancelled) {
+          setMessages((prev) => mergeMessages(prev, fresh.messages, fresh.serverTime));
+        }
       } catch (e) {
         // se reintenta en la siguiente vuelta
       }
@@ -344,6 +360,10 @@ export default function App() {
       }
     });
 
+    const unsubDeleted = realtimeChat.on('message_deleted', (data: { messageId: string }) => {
+      setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
+    });
+
     const unsubNewChan = realtimeChat.on('channel_created', (newChan: Channel) => {
       setChannels((prev) => {
         if (prev.some((c) => c.id === newChan.id)) return prev;
@@ -365,6 +385,7 @@ export default function App() {
       unsubTyping();
       unsubWebRTC();
       unsubNewChan();
+      unsubDeleted();
       unsubUserUpdated();
     };
   }, [activeChannelId, currentUser, channels]);
@@ -537,6 +558,17 @@ export default function App() {
     }
   };
 
+  // Borra un mensaje para todos (el tuyo; un administrador puede borrar cualquiera).
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!window.confirm('¿Borrar este mensaje para todos? No se puede deshacer.')) return;
+    try {
+      await api.deleteMessage(messageId);
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    } catch (err: any) {
+      alert(err.message || 'No se pudo borrar el mensaje.');
+    }
+  };
+
   // Cierra la sesión también en el servidor.
   const handleLogout = async () => {
     try {
@@ -612,6 +644,7 @@ export default function App() {
           typingUsers={typingUsers}
           onTyping={handleTyping}
           onReaction={handleReaction}
+          onDeleteMessage={handleDeleteMessage}
           onStartVoiceCall={() => handleStartCall('voice')}
           onStartVideoCall={() => handleStartCall('video')}
           onOpenSubscription={() => setIsSubscriptionOpen(true)}
@@ -679,6 +712,8 @@ export default function App() {
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
+        resetToken={resetToken}
+        onResetDone={() => setResetToken(null)}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
           setSelectedLanguage((user.preferredLanguage as LanguageCode) || 'es');
@@ -689,4 +724,4 @@ export default function App() {
       <LegalTermsModal isOpen={isLegalTermsOpen} onClose={() => setIsLegalTermsOpen(false)} />
     </div>
   );
-      }
+}
