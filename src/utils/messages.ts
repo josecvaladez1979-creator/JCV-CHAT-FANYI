@@ -1,5 +1,6 @@
 // Unión de la lista local de mensajes con la que responde el servidor.
-// Sirve de respaldo cuando la conexión en vivo no llega (redes móviles, proxies).
+// Sirve de respaldo cuando la conexión en vivo no llega (redes móviles, proxies)
+// y para que los mensajes BORRADOS desaparezcan aunque se perdiera el aviso.
 
 type Msg = {
   id: string;
@@ -18,19 +19,16 @@ export function sameMessages<T extends Msg>(a: T[], b: T[]): boolean {
   return true;
 }
 
-// Toma lo que dice el servidor y conserva lo que llegó en vivo mientras tanto.
+// serverTime = hora del servidor justo ANTES de armar la lista.
+// - Lo que ya estaba aquí y la lista no trae, y es ANTERIOR a esa hora: fue borrado.
+// - Lo que llegó en vivo y es POSTERIOR a esa hora: aún puede faltar en la lista; se conserva.
 // Si nada cambió devuelve la MISMA lista (así la pantalla no parpadea).
-export function mergeMessages<T extends Msg>(prev: T[], fresh: T[]): T[] {
-  // Una respuesta vacía nunca borra lo que ya se ve.
-  if (fresh.length === 0) return prev;
-
-  const oldest = fresh[0].timestamp;
+export function mergeMessages<T extends Msg>(prev: T[], fresh: T[], serverTime: number): T[] {
   const byId = new Map<string, T>();
   for (const m of fresh) byId.set(m.id, m);
 
-  // Un mensaje que llegó en vivo mientras se hacía la consulta aún puede faltar en ella.
   for (const m of prev) {
-    if (!byId.has(m.id) && m.timestamp >= oldest) byId.set(m.id, m);
+    if (!byId.has(m.id) && m.timestamp > serverTime) byId.set(m.id, m);
   }
 
   const merged = [...byId.values()].sort(
