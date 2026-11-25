@@ -81,6 +81,8 @@ model User {
   passwordHash      String
   name              String
   avatar            String?
+  avatarData        Bytes?         // foto de perfil (ya reducida a ~256 px)
+  avatarMime        String?
   preferredLanguage String         @default("es")
   role              Role           @default(USER)
   orgId             String?
