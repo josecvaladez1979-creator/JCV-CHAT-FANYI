@@ -9,6 +9,7 @@ import { AuthModal } from './components/AuthModal';
 import { AudioVoiceModal } from './components/AudioVoiceModal';
 import { CallModal, ActiveCall } from './components/CallModal';
 import { LegalTermsModal } from './components/LegalTermsModal';
+import { ProfileModal } from './components/ProfileModal';
 import { User, Channel, Message, LanguageCode } from './types';
 import { api } from './services/api';
 import { realtimeChat } from './services/sse';
@@ -78,6 +79,7 @@ export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
   const [isLegalTermsOpen, setIsLegalTermsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isE2EESettingsOpen, setIsE2EESettingsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
@@ -569,6 +571,14 @@ export default function App() {
     }
   };
 
+  // Tras cambiar o quitar la foto: se actualiza tu perfil y se piden los mensajes
+  // otra vez (así tus mensajes anteriores muestran la foto nueva).
+  const handleProfileUpdated = (updated: User) => {
+    setCurrentUser(updated);
+    setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, avatar: updated.avatar } : u)));
+    refreshRef.current?.();
+  };
+
   // Cierra la sesión también en el servidor.
   const handleLogout = async () => {
     try {
@@ -613,6 +623,7 @@ export default function App() {
         onOpenAuth={() => setIsAuthOpen(true)}
         onLogout={handleLogout}
         onOpenLegal={() => setIsLegalTermsOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -707,6 +718,13 @@ export default function App() {
             audioDuration: duration,
           });
         }}
+      />
+
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        currentUser={currentUser}
+        onUpdated={handleProfileUpdated}
       />
 
       <AuthModal
