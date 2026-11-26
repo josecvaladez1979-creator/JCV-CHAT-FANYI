@@ -46,7 +46,7 @@ type ClientUserSource = {
 };
 
 // Forma de usuario que espera el frontend. Nunca incluye el hash de contraseña.
-function toClientUser(u: ClientUserSource) {
+export function toClientUser(u: ClientUserSource) {
   return {
     id: u.id,
     name: u.name,
