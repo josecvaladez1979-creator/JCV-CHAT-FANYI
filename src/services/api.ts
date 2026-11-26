@@ -314,6 +314,23 @@ export const api = {
     return jsonOrThrow(res, 'No se pudo cambiar la contraseña');
   },
 
+  // Foto de perfil: la imagen ya viene reducida y como JPEG (data URL).
+  async uploadAvatar(imageDataUrl: string) {
+    const res = await request('/api/profile/avatar', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageDataUrl }),
+    });
+    const data = await jsonOrThrow(res, 'No se pudo guardar la foto');
+    return data.user;
+  },
+
+  async removeAvatar() {
+    const res = await request('/api/profile/avatar', { method: 'DELETE' });
+    const data = await jsonOrThrow(res, 'No se pudo quitar la foto');
+    return data.user;
+  },
+
   // Cierra la sesión en el servidor (revoca la renovación) y borra el token local.
   async logout() {
     try {
