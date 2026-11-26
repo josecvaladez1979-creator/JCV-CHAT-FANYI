@@ -10,6 +10,7 @@ import {
   Video,
   Download,
   Scale,
+  Camera,
 } from 'lucide-react';
 import { User, SUPPORTED_LANGUAGES, LanguageCode } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -31,6 +32,7 @@ interface NavbarProps {
   onLogout: () => void;
   onSwitchToVault?: () => void;
   onOpenLegal?: () => void;
+  onOpenProfile?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -47,6 +49,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onLogout,
   onOpenLegal,
+  onOpenProfile,
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showLangDropdown, setShowLangDropdown] = useState(false);
@@ -225,6 +228,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
 
               <div className="py-1">
+                {onOpenProfile && (
+                  <button
+                    onClick={() => {
+                      setShowUserDropdown(false);
+                      onOpenProfile();
+                    }}
+                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs text-slate-300 hover:bg-slate-800 text-left transition-colors"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Mi foto de perfil</span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setShowUserDropdown(false);
