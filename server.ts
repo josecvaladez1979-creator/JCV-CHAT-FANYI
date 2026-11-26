@@ -18,6 +18,7 @@ import { bootstrapAdminFromEnv } from "./server/admin-bootstrap";
 import { adminFiscalRouter } from "./server/routes/admin-fiscal";
 import { authRouter } from "./server/routes/auth";
 import { adminUsersRouter } from "./server/routes/admin-users";
+import { profileRouter } from "./server/routes/profile";
 import { recoveryRouter } from "./server/routes/recovery";
 import { startRetentionJob } from "./server/message-retention";
 import { chatRouter } from "./server/routes/chat";
@@ -80,7 +81,8 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Demasiadas solicitudes. Inténtalo de nuevo más tarde." },
   // El chat tiene sus propios límites por usuario (más justos que uno por IP).
-  skip: (req) => req.originalUrl.startsWith("/api/chat/"),
+  skip: (req) =>
+    req.originalUrl.startsWith("/api/chat/") || req.originalUrl.startsWith("/api/avatars/"),
 });
 
 app.use("/api", apiLimiter);
@@ -93,6 +95,7 @@ app.use("/api/auth", recoveryRouter);
 app.use("/api", catalogRouter);
 app.use("/api", translateRouter);
 app.use("/api/chat", chatRouter);
+app.use("/api", profileRouter);
 app.use("/api", paymentsRouter);
 app.use("/api/admin", adminFiscalRouter);
 app.use("/api/admin", adminUsersRouter);
