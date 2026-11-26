@@ -7,6 +7,7 @@ type Msg = {
   timestamp: number;
   translations?: Record<string, string>;
   reactions?: Record<string, string[]>;
+  senderAvatar?: string;
 };
 
 export function sameMessages<T extends Msg>(a: T[], b: T[]): boolean {
@@ -15,6 +16,7 @@ export function sameMessages<T extends Msg>(a: T[], b: T[]): boolean {
     if (a[i].id !== b[i].id) return false;
     if (JSON.stringify(a[i].translations ?? null) !== JSON.stringify(b[i].translations ?? null)) return false;
     if (JSON.stringify(a[i].reactions ?? {}) !== JSON.stringify(b[i].reactions ?? {})) return false;
+    if ((a[i].senderAvatar ?? '') !== (b[i].senderAvatar ?? '')) return false;
   }
   return true;
 }
