@@ -13,11 +13,12 @@ const EVENTS = [
   'user_updated',
   'user_status',
   'webrtc_signal',
+  'message_deleted',
 ];
 
-// Conexión en tiempo real. Antes abría el flujo sin credenciales y reintentaba
-// cada 3 s para siempre. Ahora pide un boleto de un solo uso con la sesión,
-// reintenta con espera creciente y se detiene si no hay sesión.
+// Conexión en tiempo real. Pide un boleto de un solo uso con la sesión, reintenta con
+// espera creciente y se detiene si no hay sesión. Cuando falla, avisa el MOTIVO
+// (connection_status.reason) para poder ver qué pasa en cada teléfono.
 class RealtimeChatClient {
   private eventSource: EventSource | null = null;
   private listeners: Map<string, Set<SSECallback>> = new Map();
@@ -25,6 +26,12 @@ class RealtimeChatClient {
   private attempts = 0;
   private wanted = false;
   private connecting = false;
+  private isOpen = false;
+  private lastProbeAt = 0;
+
+  private emitStatus(connected: boolean, reason?: string) {
+    this.emit('connection_status', { connected, reason });
+  }
 
   async connect() {
     this.wanted = true;
@@ -39,9 +46,11 @@ class RealtimeChatClient {
       // Sin sesión (401) no tiene sentido reintentar.
       if (error?.status === 401) {
         this.wanted = false;
-        this.emit('connection_status', { connected: false });
+        this.emitStatus(false, 'sin sesión iniciada (401)');
         return;
       }
+      const detail = error?.status ? `HTTP ${error.status}` : error?.message || 'sin respuesta';
+      this.emitStatus(false, `no se obtuvo el boleto: ${detail}`);
       this.scheduleReconnect();
     } finally {
       this.connecting = false;
@@ -54,14 +63,18 @@ class RealtimeChatClient {
 
     es.onopen = () => {
       this.attempts = 0;
-      this.emit('connection_status', { connected: true });
+      this.isOpen = true;
+      this.emitStatus(true);
     };
 
     es.onerror = () => {
       es.close();
       if (this.eventSource === es) this.eventSource = null;
-      this.emit('connection_status', { connected: false });
+      this.isOpen = false;
+      this.emitStatus(false, 'la conexión se cortó; reintentando');
       this.scheduleReconnect();
+      // Tras varios fallos seguidos, se hace una prueba para ver qué responde el servidor.
+      if (this.attempts >= 2) void this.diagnose();
     };
 
     EVENTS.forEach((name) => {
@@ -73,6 +86,34 @@ class RealtimeChatClient {
         }
       });
     });
+  }
+
+  // Una vez por minuto como máximo: pide un boleto, abre la conexión con fetch,
+  // lee SOLO el código de respuesta y la cierra. EventSource no revela el código.
+  private async diagnose() {
+    const now = Date.now();
+    if (now - this.lastProbeAt < 60_000) return;
+    this.lastProbeAt = now;
+
+    let info: string;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const ticket = await api.getStreamTicket();
+      const res = await fetch('/api/chat/stream?ticket=' + encodeURIComponent(ticket), {
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      info = `prueba: HTTP ${res.status} ${res.headers.get('content-type') ?? 'sin tipo'}`;
+    } catch (e: any) {
+      info = `prueba: sin respuesta (${e?.name || 'error'})`;
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+
+    // Si mientras tanto se logró conectar, no se pisa ese estado.
+    if (!this.isOpen) this.emitStatus(false, info);
   }
 
   // Espera 1 s, 2 s, 4 s... hasta 30 s, con un poco de azar para que todos
@@ -108,6 +149,7 @@ class RealtimeChatClient {
 
   disconnect() {
     this.wanted = false;
+    this.isOpen = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
